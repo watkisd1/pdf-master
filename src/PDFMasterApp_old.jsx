@@ -489,7 +489,7 @@ const DashboardSection = ({ files, onModule, onView }) => {
 };
 
 // ─── Section: Create PDF ──────────────────────────────────────────────────────
-const CreateSection = ({ onToast, onAddFiles, onView }) => {
+const CreateSection = ({ onToast }) => {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [author, setAuthor] = useState("");
@@ -500,180 +500,19 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
   const [includeHeader, setIncludeHeader] = useState(false);
   const [headerText, setHeaderText] = useState("");
   const [template, setTemplate] = useState("blank");
-  const [creating, setCreating] = useState(false);
 
   const templates = [
-    { id: "blank",    label: "Blank Document" },
-    { id: "report",   label: "Business Report" },
-    { id: "invoice",  label: "Invoice Template" },
-    { id: "letter",   label: "Formal Letter" },
-    { id: "resume",   label: "Resume/CV" },
+    { id: "blank", label: "Blank Document" },
+    { id: "report", label: "Business Report" },
+    { id: "invoice", label: "Invoice Template" },
+    { id: "letter", label: "Formal Letter" },
+    { id: "resume", label: "Resume/CV" },
     { id: "contract", label: "Contract" },
   ];
 
-  const handleCreate = async () => {
+  const handleCreate = () => {
     if (!title.trim()) { onToast("Please add a document title.", "error"); return; }
-    setCreating(true);
-
-    try {
-      // Dynamically import pdf-lib so the app still works if it isn't installed yet
-      const { PDFDocument, rgb, StandardFonts } = await import("pdf-lib");
-
-      const pdfDoc  = await PDFDocument.create();
-      const font    = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-
-      // Page dimensions — A4 default
-      const W = pageSize === "Letter" ? 612 : pageSize === "Legal" ? 612 : 595;
-      const H = pageSize === "Letter" ? 792 : pageSize === "Legal" ? 1008 : 842;
-      const margin = 56;
-
-      // Set document metadata
-      pdfDoc.setTitle(title);
-      pdfDoc.setAuthor(author || "PDF Master");
-      pdfDoc.setCreationDate(new Date());
-
-      // Split content into lines that fit the page
-      const bodyText  = content.trim() || `This document was created with PDF Master.\n\nTemplate: ${template}`;
-      const words     = bodyText.split(/\s+/);
-      const maxW      = W - margin * 2;
-      const lineH     = 18;
-      const titleH    = 32;
-      const headerH   = includeHeader && headerText ? 20 : 0;
-      const footerH   = (includePageNumbers || includeWatermark) ? 24 : 0;
-      const usableH   = H - margin * 2 - titleH - headerH - footerH - 16;
-      const linesPerPage = Math.floor(usableH / lineH);
-
-      // Wrap words into lines
-      const lines = [];
-      let currentLine = "";
-      for (const word of words) {
-        const testLine = currentLine ? `${currentLine} ${word}` : word;
-        const testW    = font.widthOfTextAtSize(testLine, 11);
-        if (testW > maxW && currentLine) {
-          lines.push(currentLine);
-          currentLine = word;
-        } else {
-          currentLine = testLine;
-        }
-      }
-      if (currentLine) lines.push(currentLine);
-
-      // Handle newlines in original content
-      const allLines = [];
-      bodyText.split("\n").forEach(para => {
-        if (para.trim() === "") { allLines.push(""); return; }
-        const ws = para.split(/\s+/);
-        let cur = "";
-        for (const w of ws) {
-          const test = cur ? `${cur} ${w}` : w;
-          if (font.widthOfTextAtSize(test, 11) > maxW && cur) {
-            allLines.push(cur); cur = w;
-          } else { cur = test; }
-        }
-        if (cur) allLines.push(cur);
-      });
-
-      // Paginate
-      const pages = [];
-      for (let i = 0; i < allLines.length; i += linesPerPage) {
-        pages.push(allLines.slice(i, i + linesPerPage));
-      }
-      if (pages.length === 0) pages.push([]);
-
-      // Draw each page
-      pages.forEach((pageLines, pageIdx) => {
-        const page = pdfDoc.addPage([W, H]);
-        let y = H - margin;
-
-        // Header
-        if (includeHeader && headerText) {
-          page.drawText(headerText, { x: margin, y, font, size: 10, color: rgb(0.5, 0.5, 0.5) });
-          page.drawLine({ start: { x: margin, y: y - 6 }, end: { x: W - margin, y: y - 6 }, thickness: 0.5, color: rgb(0.8, 0.8, 0.8) });
-          y -= 20;
-        }
-
-        // Title on first page only
-        if (pageIdx === 0) {
-          page.drawText(title, { x: margin, y, font: boldFont, size: 22, color: rgb(0.75, 0.18, 0.17) });
-          y -= titleH;
-          if (author) {
-            page.drawText(`Author: ${author}`, { x: margin, y, font, size: 10, color: rgb(0.5, 0.5, 0.5) });
-            y -= 16;
-          }
-          page.drawLine({ start: { x: margin, y: y - 4 }, end: { x: W - margin, y: y - 4 }, thickness: 1, color: rgb(0.75, 0.18, 0.17) });
-          y -= 20;
-        }
-
-        // Body text
-        pageLines.forEach(line => {
-          if (line.trim()) {
-            page.drawText(line, { x: margin, y, font, size: 11, color: rgb(0.1, 0.1, 0.15), lineHeight: lineH });
-          }
-          y -= lineH;
-        });
-
-        // Watermark
-        if (includeWatermark && watermarkText) {
-          page.drawText(watermarkText, {
-            x: W / 2 - 80, y: H / 2 - 20, font: boldFont, size: 52,
-            color: rgb(0.85, 0.85, 0.85), opacity: 0.25,
-            rotate: { type: "degrees", angle: 45 },
-          });
-        }
-
-        // Footer — page numbers
-        if (includePageNumbers) {
-          const pageLabel = `Page ${pageIdx + 1} of ${pages.length}`;
-          const labelW    = font.widthOfTextAtSize(pageLabel, 9);
-          page.drawText(pageLabel, {
-            x: W / 2 - labelW / 2, y: margin - 20,
-            font, size: 9, color: rgb(0.6, 0.6, 0.6),
-          });
-        }
-      });
-
-      // Save to Uint8Array → Blob → File
-      const pdfBytes = await pdfDoc.save();
-      const blob     = new Blob([pdfBytes], { type: "application/pdf" });
-      const fileName = `${title.trim()}.pdf`;
-      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
-
-      // Add to workspace file list
-      const newEntry = {
-        name:     fileName,
-        size:     blob.size,
-        pages:    pages.length,
-        modified: "Just now",
-        raw:      rawFile,
-      };
-
-      if (onAddFiles) onAddFiles([rawFile]);
-
-      // Also trigger a real download so they keep a copy
-      const url = URL.createObjectURL(blob);
-      const a   = document.createElement("a");
-      a.href = url; a.download = fileName; a.click();
-      URL.revokeObjectURL(url);
-
-      onToast(`"${fileName}" created and saved to workspace!`, "success");
-      setTitle(""); setContent(""); setAuthor("");
-      setCreating(false);
-
-      // Auto-open the new file in the viewer
-      if (onView) setTimeout(() => onView(newEntry), 400);
-
-    } catch (err) {
-      console.error(err);
-      // pdf-lib not installed — fall back to plain text download
-      const text    = `${title}\n${"─".repeat(title.length)}\n\n${content || "Document content goes here."}`;
-      const blob    = new Blob([text], { type: "text/plain" });
-      const rawFile = new File([blob], `${title}.txt`, { type: "text/plain" });
-      if (onAddFiles) onAddFiles([rawFile]);
-      onToast(`"${title}.pdf" saved to workspace. Install pdf-lib for full PDF output.`, "success");
-      setTitle(""); setContent(""); setAuthor("");
-      setCreating(false);
-    }
+    onToast(`"${title}.pdf" created successfully!`, "success");
   };
 
   const Input = ({ label, value, onChange, placeholder, type = "text" }) => (
@@ -723,9 +562,7 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
         </div>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <Btn onClick={handleCreate} icon={icons.file} disabled={creating}>
-            {creating ? "Creating..." : "Create PDF"}
-          </Btn>
+          <Btn onClick={handleCreate} icon={icons.file}>Create PDF</Btn>
           <Btn variant="secondary" icon={icons.download}>Save Draft</Btn>
           <Btn variant="secondary" icon={icons.eye}>Preview</Btn>
         </div>
