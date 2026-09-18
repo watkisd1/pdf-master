@@ -2,7 +2,9 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 
 // ── PDF.js worker setup ────────────────────────────────────────────────────────
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// The worker file is copied into /public during postinstall (see package.json).
+// This avoids CDN failures and works on any network including offline.
+pdfjsLib.GlobalWorkerOptions.workerSrc = process.env.PUBLIC_URL + "/pdf.worker.min.js";
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const S = {
