@@ -514,13 +514,27 @@ const CreateSection = ({ onToast }) => {
     onToast(`"${title}.pdf" created successfully!`, "success");
   };
 
-  const Input = ({ label, value, onChange, placeholder, type = "text" }) => (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-    </div>
-  );
+  const inputStyle = {
+  width: "100%",
+  background: COLORS.surface,
+  border: `1px solid ${COLORS.border}`,
+  borderRadius: 9,
+  padding: "10px 14px",
+  color: COLORS.text,
+  fontSize: 14,
+  outline: "none",
+  boxSizing: "border-box",
+  fontFamily: "inherit"
+};
+
+const labelStyle = {
+  fontSize: 12,
+  fontWeight: 600,
+  color: COLORS.textMuted,
+  display: "block",
+  marginBottom: 6,
+  letterSpacing: "0.3px"
+};
 
   const Toggle = ({ label, checked, onChange }) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
@@ -549,8 +563,29 @@ const CreateSection = ({ onToast }) => {
           </div>
         </div>
 
-        <Input label="DOCUMENT TITLE" value={title} onChange={setTitle} placeholder="Enter document title..." />
-        <Input label="AUTHOR" value={author} onChange={setAuthor} placeholder="Your name..." />
+         <div style={{ marginBottom: 16 }}>
+  <label style={labelStyle}>DOCUMENT TITLE</label>
+  <input
+    type="text"
+    value={title}
+    onChange={e => setTitle(e.target.value)}
+    placeholder="Enter document title..."
+    style={inputStyle}
+    autoComplete="off"
+  />
+</div>
+
+<div style={{ marginBottom: 16 }}>
+  <label style={labelStyle}>AUTHOR</label>
+  <input
+    type="text"
+    value={author}
+    onChange={e => setAuthor(e.target.value)}
+    placeholder="Your name..."
+    style={inputStyle}
+    autoComplete="off"
+  />
+</div>
 
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>CONTENT</label>
