@@ -1,0 +1,38 @@
+{
+  "name": "pdf-master",
+  "version": "1.0.0",
+  "description": "PDF Master — Full-featured PDF management application",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4",
+    "pdfjs-dist": "3.11.174",
+    "pdf-lib": "^1.17.1"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "postinstall": "node -e \"const fs=require('fs');const src='node_modules/pdfjs-dist/build/pdf.worker.min.js';const dst='public/pdf.worker.min.js';if(fs.existsSync(src)){fs.copyFileSync(src,dst);console.log('PDF.js worker copied to public/');}else{console.warn('pdfjs-dist not found, run npm install pdfjs-dist');}\" "
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
