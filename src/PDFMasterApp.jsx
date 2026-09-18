@@ -939,153 +939,424 @@ const MergeSection = ({ files, onToast, onAddFiles }) => {
     }
   };
 
-  const TabBtn = ({ id, label }) => (
-    <button onClick={() => setTab(id)} style={{ background: tab === id ? COLORS.accent : "transparent", color: tab === id ? COLORS.white : COLORS.textMuted, border: `1px solid ${tab === id ? COLORS.accent : COLORS.border}`, borderRadius: 9, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.15s" }}>
-      {label}
-    </button>
-  );
+  const fileInputRef = useRef();
+
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "9px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+  };
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Merge, Split & Organize</h2>
-      <div style={{ display: "flex", gap: 10, marginBottom: 24 }}>
-        <TabBtn id="merge" label="Merge PDFs" />
-        <TabBtn id="split" label="Split PDF" />
-        <TabBtn id="reorder" label="Reorder Pages" />
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>
+        Merge, Split & Organize
+      </h2>
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".pdf"
+        style={{ display: "none" }}
+        onChange={e => {
+          if (e.target.files.length && onAddFiles) onAddFiles(Array.from(e.target.files));
+          e.target.value = "";
+        }}
+      />
+
+      {/* Tab buttons */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        {[["merge", "Merge PDFs"], ["split", "Split PDF"], ["reorder", "Reorder"]].map(([id, lbl]) => (
+          <button key={id} onClick={() => setTab(id)} style={{
+            background: tab === id ? COLORS.accent : "transparent",
+            color: tab === id ? COLORS.white : COLORS.textMuted,
+            border: `1px solid ${tab === id ? COLORS.accent : COLORS.border}`,
+            borderRadius: 9, padding: "8px 20px", cursor: "pointer",
+            fontSize: 13, fontWeight: 600, transition: "all 0.15s", fontFamily: "inherit",
+          }}>{lbl}</button>
+        ))}
       </div>
 
+      {/* ── MERGE TAB ── */}
       {tab === "merge" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 24 }}>
+          {/* Left — file list */}
           <div>
-            <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14 }}>Select files to merge. Use the drop zone to add more PDFs.</div>
+            {/* Instruction banner */}
+            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+              <Icon d={icons.info} size={16} color={COLORS.gold} />
+              <span style={{ fontSize: 12, color: COLORS.textMuted }}>
+                Check the boxes next to the files you want to merge, then click <b style={{ color: COLORS.text }}>Merge Selected</b> on the right.
+              </span>
+            </div>
+
+            {/* Add files button — always visible */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <Btn icon={icons.upload} onClick={() => fileInputRef.current?.click()} variant="secondary">
+                Add PDF files
+              </Btn>
+              {selectedFiles.length > 0 && (
+                <Btn variant="ghost" onClick={() => setSelectedFiles([])}>
+                  Clear selection
+                </Btn>
+              )}
+            </div>
+
+            {/* File list */}
             {files.length === 0 ? (
-              <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop PDF files here to add them for merging" />
+              <div
+                data-dropzone="true"
+                onClick={() => fileInputRef.current?.click()}
+                style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 12, padding: "40px 24px", textAlign: "center", color: COLORS.textDim, cursor: "pointer", background: COLORS.surface }}
+                onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.style.borderColor = COLORS.accent; }}
+                onDragLeave={e => { e.currentTarget.style.borderColor = COLORS.border; }}
+                onDrop={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.style.borderColor = COLORS.border; const f = Array.from(e.dataTransfer.files); if (f.length && onAddFiles) onAddFiles(f); }}
+              >
+                <Icon d={icons.upload} size={32} color={COLORS.textDim} />
+                <p style={{ margin: "12px 0 4px", fontSize: 14, fontWeight: 600, color: COLORS.text }}>No files yet</p>
+                <p style={{ margin: 0, fontSize: 12 }}>Click here or drag PDF files in to get started</p>
+              </div>
             ) : (
-              <>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-                  {files.map((f, i) => (
-                    <div key={i} onClick={() => toggleSelect(f)} style={{ background: selectedFiles.includes(f) ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 10, padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s" }}>
-                      <div style={{ width: 20, height: 20, border: `2px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 5, background: selectedFiles.includes(f) ? COLORS.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {selectedFiles.includes(f) && <Icon d={icons.check} size={12} color={COLORS.white} />}
-                      </div>
-                      <Icon d={icons.file} size={18} color={COLORS.accent} />
-                      <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</div>
-                      <span style={{ fontSize: 11, color: f.raw ? COLORS.success : COLORS.error }}>
-                        {f.raw ? "✓ Ready" : "⚠ No data"}
-                      </span>
-                      <span style={{ fontSize: 11, color: COLORS.textMuted }}>{f.pages || "—"} pages</span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {files.map((f, i) => (
+                  <div
+                    key={i}
+                    onClick={() => toggleSelect(f)}
+                    style={{
+                      background: selectedFiles.includes(f) ? COLORS.accentSoft : COLORS.surface2,
+                      border: `1.5px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`,
+                      borderRadius: 10, padding: "12px 16px", cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s",
+                    }}>
+                    {/* Checkbox */}
+                    <div style={{
+                      width: 20, height: 20, flexShrink: 0, borderRadius: 5,
+                      border: `2px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`,
+                      background: selectedFiles.includes(f) ? COLORS.accent : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {selectedFiles.includes(f) && <Icon d={icons.check} size={12} color={COLORS.white} />}
                     </div>
-                  ))}
-                </div>
-                <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop more PDFs here to add to workspace" />
-              </>
+                    <Icon d={icons.file} size={18} color={COLORS.accent} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
+                        {typeof f.size === "number" ? `${(f.size / 1024).toFixed(1)} KB` : f.size || "—"}
+                        {" · "}
+                        {f.pages && f.pages !== "—" ? `${f.pages} pages` : ""}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 100,
+                      background: f.raw ? "rgba(46,204,113,0.12)" : "rgba(231,76,60,0.12)",
+                      color: f.raw ? COLORS.success : COLORS.error,
+                      border: `1px solid ${f.raw ? COLORS.success : COLORS.error}`,
+                    }}>
+                      {f.raw ? "✓ Ready" : "⚠ Re-upload"}
+                    </span>
+                  </div>
+                ))}
+
+                {/* Add more button at the bottom of list */}
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    background: "transparent", border: `2px dashed ${COLORS.border}`,
+                    borderRadius: 10, padding: "10px 16px", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 10,
+                    color: COLORS.textMuted, fontSize: 13, fontWeight: 600,
+                    fontFamily: "inherit", transition: "all 0.15s", width: "100%",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.accent; e.currentTarget.style.color = COLORS.accent; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.color = COLORS.textMuted; }}
+                >
+                  <Icon d={icons.plus} size={16} />
+                  Add another PDF file
+                </button>
+              </div>
             )}
           </div>
+
+          {/* Right — merge settings */}
           <div>
-            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px" }}>
+            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px", position: "sticky", top: 0 }}>
               <h3 style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Merge Settings</h3>
+
               <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6 }}>OUTPUT FILENAME</label>
-                <input value={outputName} onChange={e => setOutputName(e.target.value)}
-                  style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+                <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                  Output filename
+                </label>
+                <input
+                  value={outputName}
+                  onChange={e => setOutputName(e.target.value)}
+                  style={inputStyle}
+                  placeholder="merged_document"
+                />
               </div>
-              <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 16 }}>{selectedFiles.length} file(s) selected</div>
+
+              <div style={{ background: COLORS.surface, borderRadius: 8, padding: "10px 12px", marginBottom: 16, fontSize: 12 }}>
+                <div style={{ color: COLORS.textMuted, marginBottom: 4 }}>Files selected</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: selectedFiles.length >= 2 ? COLORS.accent : COLORS.textDim, letterSpacing: "-1px" }}>
+                  {selectedFiles.length} <span style={{ fontSize: 13, fontWeight: 500, color: COLORS.textMuted }}>of {files.length}</span>
+                </div>
+                {selectedFiles.length < 2 && (
+                  <div style={{ fontSize: 11, color: COLORS.gold, marginTop: 4 }}>
+                    ⚠ Select at least 2 files to merge
+                  </div>
+                )}
+              </div>
+
               {merging && (
                 <div style={{ marginBottom: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
-                    <span>Merging…</span><span>{progress}%</span>
+                    <span>Merging files…</span><span>{progress}%</span>
                   </div>
-                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
+                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 6, overflow: "hidden" }}>
                     <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
                   </div>
                 </div>
               )}
-              <Btn onClick={handleMerge} icon={icons.merge} disabled={selectedFiles.length < 2 || merging} style={{ width: "100%", justifyContent: "center" }}>
-                {merging ? "Merging…" : "Merge Selected"}
+
+              <Btn
+                onClick={handleMerge}
+                icon={icons.merge}
+                disabled={selectedFiles.length < 2 || merging}
+                style={{ width: "100%", justifyContent: "center", marginBottom: 10 }}
+              >
+                {merging ? "Merging…" : `Merge ${selectedFiles.length > 0 ? selectedFiles.length : ""} Files`}
               </Btn>
+
+              <p style={{ fontSize: 11, color: COLORS.textDim, margin: 0, lineHeight: 1.5 }}>
+                The merged PDF will download automatically and be added to your workspace.
+              </p>
             </div>
           </div>
         </div>
       )}
 
+      {/* ── SPLIT TAB ── */}
       {tab === "split" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 24 }}>
+          {/* Left — file selection */}
           <div>
-            <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14 }}>Select a PDF to split, or drop one directly here.</div>
+            {/* Instruction banner */}
+            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+              <Icon d={icons.info} size={16} color={COLORS.teal} />
+              <span style={{ fontSize: 12, color: COLORS.textMuted }}>
+                Click a file to select it for splitting, then choose your split method on the right and click <b style={{ color: COLORS.text }}>Split PDF</b>.
+              </span>
+            </div>
+
+            <Btn icon={icons.upload} onClick={() => fileInputRef.current?.click()} variant="secondary" style={{ marginBottom: 14 }}>
+              Add a PDF to split
+            </Btn>
+
             {files.length === 0 ? (
-              <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop a PDF here to split it" />
+              <div
+                data-dropzone="true"
+                onClick={() => fileInputRef.current?.click()}
+                style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 12, padding: "40px 24px", textAlign: "center", color: COLORS.textDim, cursor: "pointer", background: COLORS.surface }}
+                onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.style.borderColor = COLORS.teal; }}
+                onDragLeave={e => { e.currentTarget.style.borderColor = COLORS.border; }}
+                onDrop={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.style.borderColor = COLORS.border; const f = Array.from(e.dataTransfer.files); if (f.length && onAddFiles) onAddFiles(f); }}
+              >
+                <Icon d={icons.upload} size={32} color={COLORS.textDim} />
+                <p style={{ margin: "12px 0 4px", fontSize: 14, fontWeight: 600, color: COLORS.text }}>No files yet</p>
+                <p style={{ margin: 0, fontSize: 12 }}>Click here or drag a PDF in to get started</p>
+              </div>
             ) : (
-              <>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-                  {files.map((f, i) => (
-                    <div key={i} onClick={() => setSplitFile(f)} style={{ background: splitFile === f ? COLORS.tealSoft : COLORS.surface2, border: `1.5px solid ${splitFile === f ? COLORS.teal : COLORS.border}`, borderRadius: 10, padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s" }}>
-                      <div style={{ width: 20, height: 20, border: `2px solid ${splitFile === f ? COLORS.teal : COLORS.border}`, borderRadius: "50%", background: splitFile === f ? COLORS.teal : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {splitFile === f && <div style={{ width: 8, height: 8, background: COLORS.white, borderRadius: "50%" }} />}
-                      </div>
-                      <Icon d={icons.file} size={18} color={COLORS.teal} />
-                      <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</div>
-                      <span style={{ fontSize: 11, color: f.raw ? COLORS.success : COLORS.error }}>
-                        {f.raw ? "✓ Ready" : "⚠ No data"}
-                      </span>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {files.map((f, i) => (
+                  <div
+                    key={i}
+                    onClick={() => setSplitFile(f)}
+                    style={{
+                      background: splitFile === f ? COLORS.tealSoft : COLORS.surface2,
+                      border: `1.5px solid ${splitFile === f ? COLORS.teal : COLORS.border}`,
+                      borderRadius: 10, padding: "12px 16px", cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s",
+                    }}>
+                    {/* Radio */}
+                    <div style={{
+                      width: 18, height: 18, flexShrink: 0, borderRadius: "50%",
+                      border: `2px solid ${splitFile === f ? COLORS.teal : COLORS.border}`,
+                      background: "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {splitFile === f && <div style={{ width: 8, height: 8, background: COLORS.teal, borderRadius: "50%" }} />}
                     </div>
-                  ))}
-                </div>
-                <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop another PDF here to add it" />
-              </>
+                    <Icon d={icons.file} size={18} color={COLORS.teal} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
+                        {typeof f.size === "number" ? `${(f.size / 1024).toFixed(1)} KB` : f.size || "—"}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 100,
+                      background: f.raw ? "rgba(46,204,113,0.12)" : "rgba(231,76,60,0.12)",
+                      color: f.raw ? COLORS.success : COLORS.error,
+                      border: `1px solid ${f.raw ? COLORS.success : COLORS.error}`,
+                    }}>
+                      {f.raw ? "✓ Ready" : "⚠ Re-upload"}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
+
+          {/* Right — split options */}
           <div>
-            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px" }}>
-              <h3 style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Split Options</h3>
-              {[["pages", "By Page Range"], ["every", "Every N Pages"], ["individual", "Individual Pages"]].map(([id, lbl]) => (
-                <div key={id} onClick={() => setSplitMode(id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
-                  <div style={{ width: 16, height: 16, border: `2px solid ${splitMode === id ? COLORS.teal : COLORS.border}`, borderRadius: "50%", background: splitMode === id ? COLORS.teal : "transparent" }} />
-                  <span style={{ fontSize: 13, color: COLORS.text }}>{lbl}</span>
-                </div>
-              ))}
+            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px", position: "sticky", top: 0 }}>
+              <h3 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Split Options</h3>
+              <p style={{ margin: "0 0 16px", fontSize: 12, color: COLORS.textMuted }}>
+                {splitFile ? `Splitting: ${splitFile.name}` : "No file selected"}
+              </p>
+
+              {/* Split mode selector */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+                {[
+                  ["pages",      "By page range",    "Extract specific pages e.g. 1-3, 5"],
+                  ["every",      "Every N pages",     "Split into equal chunks"],
+                  ["individual", "Individual pages",  "One file per page"],
+                ].map(([id, lbl, desc]) => (
+                  <div
+                    key={id}
+                    onClick={() => setSplitMode(id)}
+                    style={{
+                      background: splitMode === id ? COLORS.tealSoft : COLORS.surface,
+                      border: `1.5px solid ${splitMode === id ? COLORS.teal : COLORS.border}`,
+                      borderRadius: 9, padding: "10px 14px", cursor: "pointer", transition: "all 0.12s",
+                    }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{
+                        width: 14, height: 14, borderRadius: "50%", flexShrink: 0,
+                        border: `2px solid ${splitMode === id ? COLORS.teal : COLORS.border}`,
+                        background: splitMode === id ? COLORS.teal : "transparent",
+                      }} />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: splitMode === id ? COLORS.teal : COLORS.text }}>{lbl}</span>
+                    </div>
+                    <p style={{ margin: "4px 0 0 22px", fontSize: 11, color: COLORS.textMuted }}>{desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Page range input */}
               {splitMode === "pages" && (
-                <input value={splitRange} onChange={e => setSplitRange(e.target.value)} placeholder="e.g. 1-3, 5, 7-10"
-                  style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 12, boxSizing: "border-box" }} />
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                    Page range
+                  </label>
+                  <input
+                    value={splitRange}
+                    onChange={e => setSplitRange(e.target.value)}
+                    placeholder="e.g. 1-3, 5, 7-10"
+                    style={inputStyle}
+                  />
+                  <p style={{ fontSize: 11, color: COLORS.textDim, margin: "5px 0 0" }}>
+                    Use commas to separate ranges. Example: 1-3, 5, 8-10
+                  </p>
+                </div>
               )}
+
+              {/* Every N pages input */}
               {splitMode === "every" && (
-                <input type="number" value={splitEvery} onChange={e => setSplitEvery(e.target.value)} min={1}
-                  style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 12, boxSizing: "border-box" }} />
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.4px" }}>
+                    Pages per file
+                  </label>
+                  <input
+                    type="number"
+                    value={splitEvery}
+                    onChange={e => setSplitEvery(e.target.value)}
+                    min={1}
+                    style={inputStyle}
+                  />
+                  <p style={{ fontSize: 11, color: COLORS.textDim, margin: "5px 0 0" }}>
+                    A 10-page PDF split every 3 pages gives you 4 files.
+                  </p>
+                </div>
               )}
+
+              {splitMode === "individual" && (
+                <div style={{ background: COLORS.surface, borderRadius: 8, padding: "10px 12px", marginBottom: 14, fontSize: 12, color: COLORS.textMuted }}>
+                  Each page becomes its own separate PDF file. All files download automatically.
+                </div>
+              )}
+
+              {/* Progress */}
               {splitting && (
-                <div style={{ marginBottom: 12 }}>
+                <div style={{ marginBottom: 14 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
                     <span>Splitting…</span><span>{progress}%</span>
                   </div>
-                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
+                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 6, overflow: "hidden" }}>
                     <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.teal}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
                   </div>
                 </div>
               )}
-              <Btn onClick={handleSplit} variant="teal" icon={icons.split} disabled={!splitFile || splitting} style={{ width: "100%", justifyContent: "center", marginTop: 16 }}>
+
+              <Btn
+                onClick={handleSplit}
+                variant="teal"
+                icon={icons.split}
+                disabled={!splitFile || splitting}
+                style={{ width: "100%", justifyContent: "center", marginBottom: 10 }}
+              >
                 {splitting ? "Splitting…" : "Split PDF"}
               </Btn>
+
+              {!splitFile && (
+                <p style={{ fontSize: 11, color: COLORS.gold, margin: 0, textAlign: "center" }}>
+                  ⚠ Select a file on the left first
+                </p>
+              )}
+              {splitFile && !splitting && (
+                <p style={{ fontSize: 11, color: COLORS.textDim, margin: 0, lineHeight: 1.5 }}>
+                  Split files download automatically and are added to your workspace.
+                </p>
+              )}
             </div>
           </div>
         </div>
       )}
 
+      {/* ── REORDER TAB ── */}
       {tab === "reorder" && (
         <div>
-          <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 16 }}>Drag or use arrows to reorder files for merging.</div>
-          {reorderFiles.map((f, i) => (
-            <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 8, display: "flex", alignItems: "center", gap: 14 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.textDim, minWidth: 24 }}>{i + 1}</span>
-              <Icon d={icons.file} size={18} color={COLORS.accent} />
-              <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => moveUp(i)} style={{ background: COLORS.surface3, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted, cursor: "pointer", borderRadius: 6, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>▲</button>
-                <button onClick={() => moveDown(i)} style={{ background: COLORS.surface3, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted, cursor: "pointer", borderRadius: 6, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>▼</button>
-              </div>
-            </div>
-          ))}
-          <div style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <p style={{ fontSize: 13, color: COLORS.textMuted, margin: 0 }}>Use the arrows to reorder files before merging them.</p>
             <Btn icon={icons.check} onClick={() => onToast("File order saved!", "success")}>Save Order</Btn>
           </div>
+          {reorderFiles.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px", color: COLORS.textDim, fontSize: 13 }}>
+              No files in workspace yet. Upload some PDFs first.
+            </div>
+          ) : (
+            reorderFiles.map((f, i) => (
+              <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px", marginBottom: 8, display: "flex", alignItems: "center", gap: 14 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: COLORS.textDim, minWidth: 24, textAlign: "center" }}>{i + 1}</span>
+                <Icon d={icons.file} size={18} color={COLORS.accent} />
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button
+                    onClick={() => moveUp(i)}
+                    disabled={i === 0}
+                    style={{ background: COLORS.surface3, border: `1px solid ${COLORS.border}`, color: i === 0 ? COLORS.textDim : COLORS.textMuted, cursor: i === 0 ? "not-allowed" : "pointer", borderRadius: 6, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}
+                  >▲</button>
+                  <button
+                    onClick={() => moveDown(i)}
+                    disabled={i >= reorderFiles.length - 1}
+                    style={{ background: COLORS.surface3, border: `1px solid ${COLORS.border}`, color: i >= reorderFiles.length - 1 ? COLORS.textDim : COLORS.textMuted, cursor: i >= reorderFiles.length - 1 ? "not-allowed" : "pointer", borderRadius: 6, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}
+                  >▼</button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -1093,156 +1364,514 @@ const MergeSection = ({ files, onToast, onAddFiles }) => {
 };
 
 // ─── Section: Sign & Forms ────────────────────────────────────────────────────
-const SignSection = ({ files, onToast }) => {
-  const canvasRef = useRef();
-  const [drawing, setDrawing] = useState(false);
-  const [signMode, setSignMode] = useState("draw");
-  const [typedSig, setTypedSig] = useState("");
-  const [sigFont, setSigFont] = useState("cursive");
-  const [hasSig, setHasSig] = useState(false);
+const SignSection = ({ files, onToast, onAddFiles }) => {
+  const canvasRef    = useRef();
+  const uploadRef    = useRef();
+  const typeCanvasRef = useRef();
+  const lastPos      = useRef(null);
+
+  const [drawing, setDrawing]       = useState(false);
+  const [signMode, setSignMode]     = useState("draw");
+  const [typedSig, setTypedSig]     = useState("");
+  const [sigFont, setSigFont]       = useState("cursive");
+  const [hasSig, setHasSig]         = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
-  const [sigColor, setSigColor] = useState("#1a1a2e");
-  const lastPos = useRef(null);
+  const [sigColor, setSigColor]     = useState("#1a1a2e");
+  const [sigPosition, setSigPosition] = useState("bottom-right");
+  const [sigPage, setSigPage]       = useState(1);
+  const [signing, setSigning]       = useState(false);
+  const [signedFiles, setSignedFiles] = useState([]);
+  const [uploadedSigUrl, setUploadedSigUrl] = useState(null);
+  const [stampTarget, setStampTarget] = useState(null);
+
+  // ── Canvas drawing ───────────────────────────────────────────────────────────
+  const getPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    if (e.touches) return {
+      x: (e.touches[0].clientX - rect.left) * scaleX,
+      y: (e.touches[0].clientY - rect.top) * scaleY,
+    };
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  };
 
   const startDraw = (e) => {
+    e.preventDefault();
     setDrawing(true);
-    const rect = canvasRef.current.getBoundingClientRect();
-    lastPos.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    lastPos.current = getPos(e, canvasRef.current);
   };
   const draw = (e) => {
+    e.preventDefault();
     if (!drawing) return;
     const ctx = canvasRef.current.getContext("2d");
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left, y = e.clientY - rect.top;
-    ctx.beginPath(); ctx.moveTo(lastPos.current.x, lastPos.current.y);
-    ctx.lineTo(x, y); ctx.strokeStyle = sigColor; ctx.lineWidth = 2.5; ctx.lineCap = "round"; ctx.stroke();
-    lastPos.current = { x, y }; setHasSig(true);
+    const pos = getPos(e, canvasRef.current);
+    ctx.beginPath();
+    ctx.moveTo(lastPos.current.x, lastPos.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.strokeStyle = sigColor;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+    lastPos.current = pos;
+    setHasSig(true);
   };
+  const stopDraw = () => setDrawing(false);
+
   const clearSig = () => {
     const ctx = canvasRef.current?.getContext("2d");
     if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
     setHasSig(false);
   };
-  const applySig = () => {
-    if (!selectedFile) { onToast("Select a document to sign.", "error"); return; }
-    if (signMode === "draw" && !hasSig) { onToast("Draw your signature first.", "error"); return; }
-    if (signMode === "type" && !typedSig.trim()) { onToast("Type your signature first.", "error"); return; }
-    onToast(`Document "${selectedFile.name}" signed successfully!`, "success");
+
+  // ── Render typed signature to canvas ────────────────────────────────────────
+  useEffect(() => {
+    if (signMode !== "type" || !typeCanvasRef.current) return;
+    const canvas = typeCanvasRef.current;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!typedSig.trim()) return;
+    ctx.fillStyle = sigColor;
+    ctx.font = `48px ${sigFont}`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(typedSig, 16, canvas.height / 2);
+    setHasSig(true);
+  }, [typedSig, sigFont, sigColor, signMode]);
+
+  // ── Upload signature image ───────────────────────────────────────────────────
+  const handleUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setUploadedSigUrl(ev.target.result);
+      setHasSig(true);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
-  const formFields = [
-    { type: "Text Field", icon: "T", color: "#60A5FA" },
-    { type: "Checkbox", icon: "☑", color: "#34D399" },
-    { type: "Radio Button", icon: "◉", color: "#A78BFA" },
-    { type: "Dropdown", icon: "▼", color: "#F472B6" },
-    { type: "Date Field", icon: "📅", color: COLORS.gold },
-    { type: "Signature Field", icon: "✍", color: COLORS.accent },
+  // ── Get signature PNG bytes from current mode ────────────────────────────────
+  const getSigImageBytes = () => {
+    return new Promise((resolve, reject) => {
+      if (signMode === "draw") {
+        canvasRef.current.toBlob(blob => {
+          blob.arrayBuffer().then(resolve).catch(reject);
+        }, "image/png");
+      } else if (signMode === "type") {
+        typeCanvasRef.current.toBlob(blob => {
+          blob.arrayBuffer().then(resolve).catch(reject);
+        }, "image/png");
+      } else if (signMode === "upload" && uploadedSigUrl) {
+        fetch(uploadedSigUrl)
+          .then(r => r.arrayBuffer())
+          .then(resolve)
+          .catch(reject);
+      } else {
+        reject(new Error("No signature available"));
+      }
+    });
+  };
+
+  // ── Position mapping → pdf-lib coordinates ──────────────────────────────────
+  const getSigCoords = (page, sigW, sigH, position) => {
+    const { width, height } = page.getSize();
+    const margin = 30;
+    const positions = {
+      "top-left":      { x: margin,               y: height - margin - sigH },
+      "top-center":    { x: (width - sigW) / 2,   y: height - margin - sigH },
+      "top-right":     { x: width - margin - sigW, y: height - margin - sigH },
+      "center":        { x: (width - sigW) / 2,   y: (height - sigH) / 2    },
+      "bottom-left":   { x: margin,               y: margin                  },
+      "bottom-center": { x: (width - sigW) / 2,   y: margin                  },
+      "bottom-right":  { x: width - margin - sigW, y: margin                  },
+    };
+    return positions[position] || positions["bottom-right"];
+  };
+
+  // ── Apply real signature to PDF ──────────────────────────────────────────────
+  const applySig = async () => {
+    if (!selectedFile)        { onToast("Select a document to sign.", "error"); return; }
+    if (!selectedFile.raw)    { onToast("Re-upload the file — no data attached.", "error"); return; }
+    if (!hasSig)              { onToast("Create your signature first.", "error"); return; }
+
+    setSigning(true);
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+
+      // Load source PDF
+      const pdfBuffer = await selectedFile.raw.arrayBuffer();
+      const pdfDoc    = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+      const totalPages = pdfDoc.getPageCount();
+      const targetPageIdx = Math.min(Math.max((sigPage || 1) - 1, 0), totalPages - 1);
+      const page = pdfDoc.getPage(targetPageIdx);
+
+      // Get signature PNG
+      const sigBytes = await getSigImageBytes();
+      const sigImage = await pdfDoc.embedPng(sigBytes);
+
+      // Scale signature to reasonable size
+      const maxSigW = 200;
+      const maxSigH = 80;
+      const dims    = sigImage.scaleToFit(maxSigW, maxSigH);
+      const { x, y } = getSigCoords(page, dims.width, dims.height, sigPosition);
+
+      // Draw signature image onto page
+      page.drawImage(sigImage, {
+        x, y,
+        width:  dims.width,
+        height: dims.height,
+      });
+
+      // Add signed date text below signature
+      const { StandardFonts, rgb } = await import("pdf-lib");
+      const font = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+      const dateStr = `Signed: ${new Date().toLocaleDateString()}`;
+      page.drawText(dateStr, {
+        x, y: y - 14,
+        font, size: 8,
+        color: rgb(0.4, 0.4, 0.4),
+      });
+
+      // Save and download
+      const signedBytes = await pdfDoc.save();
+      const fileName    = selectedFile.name.replace(/\.pdf$/i, "") + "_signed.pdf";
+      const blob        = new Blob([signedBytes], { type: "application/pdf" });
+      const url         = URL.createObjectURL(blob);
+      const a           = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Add to workspace
+      const rawFile = new File([blob], fileName, { type: "application/pdf" });
+      if (onAddFiles) onAddFiles([rawFile]);
+
+      // Track signed files
+      setSignedFiles(prev => [...prev, { name: fileName, time: new Date().toLocaleTimeString() }]);
+
+      onToast(`✓ "${fileName}" signed and downloaded!`, "success");
+      setSigning(false);
+    } catch (err) {
+      console.error(err);
+      onToast(`Signing failed: ${err.message}`, "error");
+      setSigning(false);
+    }
+  };
+
+  // ── Apply stamp to PDF ───────────────────────────────────────────────────────
+  const applyStamp = async (stampText, stampColor) => {
+    const target = stampTarget || selectedFile;
+    if (!target || !target.raw) { onToast("Select a document to stamp first.", "error"); return; }
+    try {
+      const { PDFDocument, rgb, degrees } = await import("pdf-lib");
+      const { StandardFonts } = await import("pdf-lib");
+      const buffer  = await target.raw.arrayBuffer();
+      const pdfDoc  = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const font    = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      // Apply stamp to every page
+      const pages = pdfDoc.getPages();
+      pages.forEach(page => {
+        const { width, height } = page.getSize();
+        const colors = {
+          APPROVED:     rgb(0.1, 0.6, 0.2),
+          REJECTED:     rgb(0.85, 0.2, 0.2),
+          CONFIDENTIAL: rgb(0.85, 0.2, 0.2),
+          DRAFT:        rgb(0.7, 0.5, 0.1),
+          REVIEWED:     rgb(0.1, 0.4, 0.8),
+          VOID:         rgb(0.5, 0.1, 0.7),
+        };
+        const c = colors[stampText] || rgb(0.5, 0.5, 0.5);
+        const fontSize = 52;
+        const textW = font.widthOfTextAtSize(stampText, fontSize);
+
+        page.drawText(stampText, {
+          x: (width - textW) / 2,
+          y: (height - fontSize) / 2,
+          font, size: fontSize,
+          color: c, opacity: 0.22,
+          rotate: degrees(35),
+        });
+      });
+
+      const bytes    = await pdfDoc.save();
+      const fileName = target.name.replace(/\.pdf$/i, "") + `_${stampText.toLowerCase()}.pdf`;
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const url      = URL.createObjectURL(blob);
+      const a        = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      const rawFile = new File([blob], fileName, { type: "application/pdf" });
+      if (onAddFiles) onAddFiles([rawFile]);
+
+      onToast(`✓ "${stampText}" stamp applied to all pages!`, "success");
+    } catch (err) {
+      console.error(err);
+      onToast(`Stamp failed: ${err.message}`, "error");
+    }
+  };
+
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "8px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+  };
+
+  const STAMPS = [
+    { label: "APPROVED",     color: COLORS.success },
+    { label: "REJECTED",     color: COLORS.error },
+    { label: "CONFIDENTIAL", color: COLORS.accent },
+    { label: "DRAFT",        color: COLORS.gold },
+    { label: "REVIEWED",     color: "#60A5FA" },
+    { label: "VOID",         color: "#A78BFA" },
   ];
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Signatures & Forms</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>
+        Sign & Stamp
+      </h2>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 24 }}>
+
+        {/* ── Left: Signature creator ── */}
         <div>
-          {/* File Selection */}
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 8, letterSpacing: "0.3px" }}>SELECT DOCUMENT TO SIGN</label>
+
+          {/* Step 1 — Select document */}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "18px 20px", marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.accent, letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 10 }}>
+              Step 1 — Select document to sign
+            </div>
             {files.length === 0 ? (
-              <div style={{ background: COLORS.surface2, border: `1px dashed ${COLORS.border}`, borderRadius: 10, padding: "20px", textAlign: "center", color: COLORS.textDim, fontSize: 13 }}>Upload files first</div>
+              <div style={{ fontSize: 13, color: COLORS.textDim, padding: "12px", background: COLORS.surface, borderRadius: 8, border: `1px dashed ${COLORS.border}`, textAlign: "center" }}>
+                Upload a PDF first — go to File Manager or drag a PDF anywhere on the app
+              </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {files.map((f, i) => (
-                  <div key={i} onClick={() => setSelectedFile(f)} style={{ background: selectedFile === f ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${selectedFile === f ? COLORS.accent : COLORS.border}`, borderRadius: 9, padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: selectedFile === f ? COLORS.accent : COLORS.text, fontWeight: 600 }}>
-                    <Icon d={icons.file} size={16} color={selectedFile === f ? COLORS.accent : COLORS.textMuted} />
-                    {f.name}
+                  <div key={i} onClick={() => { setSelectedFile(f); setStampTarget(f); }} style={{
+                    background: selectedFile === f ? COLORS.accentSoft : COLORS.surface,
+                    border: `1.5px solid ${selectedFile === f ? COLORS.accent : COLORS.border}`,
+                    borderRadius: 9, padding: "10px 14px", cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 10, transition: "all 0.12s",
+                  }}>
+                    <div style={{ width: 16, height: 16, borderRadius: "50%", flexShrink: 0, border: `2px solid ${selectedFile === f ? COLORS.accent : COLORS.border}`, background: selectedFile === f ? COLORS.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {selectedFile === f && <div style={{ width: 6, height: 6, background: COLORS.white, borderRadius: "50%" }} />}
+                    </div>
+                    <Icon d={icons.file} size={15} color={selectedFile === f ? COLORS.accent : COLORS.textMuted} />
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: selectedFile === f ? COLORS.accent : COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 100, background: f.raw ? "rgba(46,204,113,0.12)" : "rgba(231,76,60,0.12)", color: f.raw ? COLORS.success : COLORS.error, border: `1px solid ${f.raw ? COLORS.success : COLORS.error}` }}>
+                      {f.raw ? "✓ Ready" : "⚠ Re-upload"}
+                    </span>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Signature Input */}
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Create Signature</h3>
-            <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
-              {[["draw", "Draw"], ["type", "Type"], ["upload", "Upload"]].map(([id, lbl]) => (
-                <button key={id} onClick={() => setSignMode(id)} style={{ background: signMode === id ? COLORS.accent : COLORS.surface3, color: signMode === id ? COLORS.white : COLORS.textMuted, border: `1px solid ${signMode === id ? COLORS.accent : COLORS.border}`, borderRadius: 8, padding: "7px 16px", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.15s" }}>
-                  {lbl}
-                </button>
+          {/* Step 2 — Create signature */}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "18px 20px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.accent, letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 14 }}>
+              Step 2 — Create your signature
+            </div>
+
+            {/* Mode tabs */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+              {[["draw", "✏ Draw"], ["type", "T Type"], ["upload", "⬆ Upload"]].map(([id, lbl]) => (
+                <button key={id} onClick={() => { setSignMode(id); setHasSig(false); }} style={{
+                  background: signMode === id ? COLORS.accent : COLORS.surface3,
+                  color: signMode === id ? COLORS.white : COLORS.textMuted,
+                  border: `1px solid ${signMode === id ? COLORS.accent : COLORS.border}`,
+                  borderRadius: 8, padding: "7px 14px", cursor: "pointer",
+                  fontSize: 12, fontWeight: 600, transition: "all 0.15s", fontFamily: "inherit",
+                }}>{lbl}</button>
               ))}
             </div>
 
+            {/* Draw mode */}
             {signMode === "draw" && (
               <div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
-                  <span style={{ fontSize: 12, color: COLORS.textMuted }}>Color:</span>
-                  {["#1a1a2e", "#E84D4D", "#0044cc", "#006600"].map(c => (
-                    <div key={c} onClick={() => setSigColor(c)} style={{ width: 20, height: 20, background: c, borderRadius: 4, cursor: "pointer", border: `2px solid ${sigColor === c ? COLORS.text : "transparent"}` }} />
+                  <span style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: 500 }}>Ink color:</span>
+                  {["#1a1a2e", "#E84D4D", "#0044cc", "#006600", "#7B2FBE"].map(c => (
+                    <div key={c} onClick={() => setSigColor(c)} style={{ width: 22, height: 22, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${sigColor === c ? COLORS.text : "transparent"}`, transition: "border 0.1s" }} />
                   ))}
                 </div>
-                <canvas ref={canvasRef} width={460} height={140}
-                  onMouseDown={startDraw} onMouseMove={draw} onMouseUp={() => setDrawing(false)} onMouseLeave={() => setDrawing(false)}
-                  style={{ background: "#fff", borderRadius: 10, cursor: "crosshair", display: "block", border: `1px solid ${COLORS.border}`, width: "100%", maxWidth: 460, touchAction: "none" }} />
-                <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+                <div style={{ position: "relative" }}>
+                  <canvas
+                    ref={canvasRef}
+                    width={500} height={140}
+                    onMouseDown={startDraw}
+                    onMouseMove={draw}
+                    onMouseUp={stopDraw}
+                    onMouseLeave={stopDraw}
+                    onTouchStart={startDraw}
+                    onTouchMove={draw}
+                    onTouchEnd={stopDraw}
+                    style={{ background: "#fff", borderRadius: 10, cursor: "crosshair", display: "block", border: `2px solid ${hasSig ? COLORS.accent : COLORS.border}`, width: "100%", touchAction: "none", transition: "border-color 0.2s" }}
+                  />
+                  {!hasSig && (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                      <span style={{ fontSize: 13, color: "#ccc", fontStyle: "italic" }}>Sign here with your mouse or finger</span>
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   <Btn onClick={clearSig} variant="ghost" small icon={icons.trash}>Clear</Btn>
+                  {hasSig && <span style={{ fontSize: 11, color: COLORS.success, alignSelf: "center" }}>✓ Signature ready</span>}
                 </div>
               </div>
             )}
 
+            {/* Type mode */}
             {signMode === "type" && (
               <div>
-                <input value={typedSig} onChange={e => setTypedSig(e.target.value)} placeholder="Type your signature..."
-                  style={{ width: "100%", background: "#fff", border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "16px 18px", color: "#1a1a2e", fontSize: 28, fontFamily: sigFont, outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
-                <div style={{ display: "flex", gap: 8 }}>
-                  {["cursive", "'Dancing Script', cursive", "Georgia, serif"].map((f, i) => (
-                    <button key={i} onClick={() => setSigFont(f)} style={{ background: sigFont === f ? COLORS.accentSoft : COLORS.surface3, border: `1px solid ${sigFont === f ? COLORS.accent : COLORS.border}`, borderRadius: 7, padding: "4px 14px", cursor: "pointer", fontFamily: f, color: COLORS.text, fontSize: 15 }}>
-                      {typedSig || "Style"}
-                    </button>
+                <input
+                  value={typedSig}
+                  onChange={e => setTypedSig(e.target.value)}
+                  placeholder="Type your full name…"
+                  style={{ ...inputStyle, fontSize: 26, fontFamily: sigFont, background: "#fff", color: "#1a1a2e", padding: "12px 16px", marginBottom: 12 }}
+                />
+                <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.textMuted, marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>Choose style</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  {[
+                    { font: "cursive",                label: "Casual" },
+                    { font: "Georgia, serif",          label: "Formal" },
+                    { font: "'Courier New', monospace", label: "Print" },
+                  ].map(({ font, label }) => (
+                    <div key={font} onClick={() => setSigFont(font)} style={{ flex: 1, background: sigFont === font ? COLORS.accentSoft : COLORS.surface, border: `1.5px solid ${sigFont === font ? COLORS.accent : COLORS.border}`, borderRadius: 9, padding: "10px 8px", cursor: "pointer", textAlign: "center", transition: "all 0.12s" }}>
+                      <div style={{ fontSize: 20, fontFamily: font, color: "#1a1a2e", marginBottom: 4 }}>{typedSig || "Signature"}</div>
+                      <div style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: 600 }}>{label}</div>
+                    </div>
                   ))}
                 </div>
+                {/* Hidden canvas for rendering typed sig */}
+                <canvas ref={typeCanvasRef} width={500} height={80} style={{ display: "none" }} />
+                {hasSig && <span style={{ fontSize: 11, color: COLORS.success }}>✓ Signature ready</span>}
               </div>
             )}
 
+            {/* Upload mode */}
             {signMode === "upload" && (
-              <div style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 10, padding: "30px", textAlign: "center", color: COLORS.textDim, cursor: "pointer" }} onClick={() => onToast("File picker would open here", "")}>
-                <Icon d={icons.upload} size={28} color={COLORS.textDim} />
-                <p style={{ margin: "10px 0 0", fontSize: 13 }}>Upload signature image (PNG, JPG)</p>
+              <div>
+                <input ref={uploadRef} type="file" accept="image/png,image/jpeg,image/gif" style={{ display: "none" }} onChange={handleUpload} />
+                {uploadedSigUrl ? (
+                  <div style={{ background: "#fff", borderRadius: 10, padding: "16px", border: `2px solid ${COLORS.accent}`, textAlign: "center" }}>
+                    <img src={uploadedSigUrl} alt="Signature" style={{ maxHeight: 80, maxWidth: "100%", objectFit: "contain" }} />
+                    <div style={{ marginTop: 10, display: "flex", gap: 8, justifyContent: "center" }}>
+                      <Btn variant="ghost" small onClick={() => { setUploadedSigUrl(null); setHasSig(false); }} icon={icons.trash}>Remove</Btn>
+                      <Btn variant="secondary" small onClick={() => uploadRef.current?.click()} icon={icons.upload}>Change</Btn>
+                    </div>
+                    <div style={{ fontSize: 11, color: COLORS.success, marginTop: 8 }}>✓ Signature ready</div>
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => uploadRef.current?.click()}
+                    style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 10, padding: "32px", textAlign: "center", cursor: "pointer", background: COLORS.surface, transition: "all 0.15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = COLORS.accent; e.currentTarget.style.background = COLORS.accentSoft; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = COLORS.border; e.currentTarget.style.background = COLORS.surface; }}
+                  >
+                    <Icon d={icons.upload} size={28} color={COLORS.textDim} />
+                    <p style={{ margin: "10px 0 4px", fontSize: 14, fontWeight: 600, color: COLORS.text }}>Upload signature image</p>
+                    <p style={{ margin: 0, fontSize: 12, color: COLORS.textMuted }}>PNG with transparent background works best</p>
+                  </div>
+                )}
               </div>
             )}
-
-            <div style={{ marginTop: 18 }}>
-              <Btn onClick={applySig} icon={icons.sign} disabled={!selectedFile}>Apply Signature</Btn>
-            </div>
           </div>
         </div>
 
-        {/* Form Fields */}
-        <div>
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px" }}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Form Fields</h3>
-            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 14px" }}>Drag fields onto your document to create fillable forms.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {formFields.map((f, i) => (
-                <div key={i} draggable style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", cursor: "grab", display: "flex", alignItems: "center", gap: 12, fontSize: 13, color: COLORS.text, fontWeight: 500 }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = f.color}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.border}>
-                  <span style={{ fontSize: 18, color: f.color }}>{f.icon}</span>
-                  {f.type}
-                </div>
-              ))}
+        {/* ── Right: Settings + Stamps + History ── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+          {/* Signature placement settings */}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "18px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.accent, letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 14 }}>
+              Step 3 — Place & apply
             </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Signature position</label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {[
+                  ["top-left", "Top Left"],
+                  ["top-right", "Top Right"],
+                  ["bottom-left", "Bottom Left"],
+                  ["bottom-right", "Bottom Right ✓"],
+                  ["bottom-center", "Bottom Center"],
+                  ["center", "Center"],
+                ].map(([id, lbl]) => (
+                  <div key={id} onClick={() => setSigPosition(id)} style={{ background: sigPosition === id ? COLORS.accentSoft : COLORS.surface, border: `1.5px solid ${sigPosition === id ? COLORS.accent : COLORS.border}`, borderRadius: 7, padding: "6px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600, color: sigPosition === id ? COLORS.accent : COLORS.text, textAlign: "center", transition: "all 0.12s" }}>
+                    {lbl}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Page number</label>
+              <input type="number" min={1} value={sigPage} onChange={e => setSigPage(parseInt(e.target.value) || 1)}
+                style={{ ...inputStyle, width: "100%" }} />
+              <p style={{ fontSize: 11, color: COLORS.textDim, margin: "4px 0 0" }}>Which page to place the signature on</p>
+            </div>
+
+            {signing && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
+                  <div style={{ width: "60%", height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, animation: "pulse 1s infinite" }} />
+                </div>
+                <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 5 }}>Embedding signature…</div>
+              </div>
+            )}
+
+            <Btn
+              onClick={applySig}
+              icon={icons.sign}
+              disabled={!selectedFile || !hasSig || signing}
+              style={{ width: "100%", justifyContent: "center" }}
+            >
+              {signing ? "Signing…" : "Apply Signature to PDF"}
+            </Btn>
+
+            {!selectedFile && <p style={{ fontSize: 11, color: COLORS.gold, marginTop: 8, textAlign: "center" }}>⚠ Select a file on the left</p>}
+            {selectedFile && !hasSig && <p style={{ fontSize: 11, color: COLORS.gold, marginTop: 8, textAlign: "center" }}>⚠ Create your signature first</p>}
           </div>
 
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px", marginTop: 16 }}>
-            <h3 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Stamp</h3>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {["APPROVED", "REJECTED", "CONFIDENTIAL", "DRAFT", "REVIEWED", "VOID"].map(s => (
-                <button key={s} onClick={() => onToast(`"${s}" stamp applied!`, "success")} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "6px 12px", cursor: "pointer", fontSize: 11, fontWeight: 800, color: s === "APPROVED" ? COLORS.success : s === "REJECTED" ? COLORS.error : s === "CONFIDENTIAL" ? COLORS.accent : COLORS.gold, letterSpacing: "0.5px" }}>
-                  {s}
+          {/* Stamps */}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 10 }}>
+              Stamps — applies to all pages
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {STAMPS.map(({ label, color }) => (
+                <button key={label} onClick={() => applyStamp(label, color)} style={{ background: COLORS.surface, border: `1.5px solid ${color}`, borderRadius: 7, padding: "6px 12px", cursor: "pointer", fontSize: 11, fontWeight: 800, color, letterSpacing: "0.5px", fontFamily: "inherit", transition: "all 0.12s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = `${color}15`; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = COLORS.surface; }}>
+                  {label}
                 </button>
               ))}
             </div>
+            {!stampTarget && <p style={{ fontSize: 11, color: COLORS.textDim, marginTop: 8 }}>Select a file above to stamp it</p>}
           </div>
+
+          {/* Signed file history */}
+          {signedFiles.length > 0 && (
+            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 10 }}>
+                Recently signed
+              </div>
+              {signedFiles.map((f, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: i < signedFiles.length - 1 ? `1px solid ${COLORS.border}` : "none" }}>
+                  <Icon d={icons.check} size={13} color={COLORS.success} />
+                  <span style={{ flex: 1, fontSize: 12, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                  <span style={{ fontSize: 10, color: COLORS.textDim }}>{f.time}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1940,7 +2569,7 @@ export default function PDFMasterApp() {
       </div>
 
       {/* PDF Viewer Overlay — Real PDF.js viewer */}
-      {viewerFile && <RealPDFViewer file={viewerFile} onClose={() => setViewerFile(null)} />}
+      {viewerFile && <RealPDFViewer file={viewerFile} onClose={() => setViewerFile(null)} onAddFiles={addFiles} />}
 
       {/* Global drag overlay — shown when a file is dragged anywhere over the app */}
       {globalDrag && !viewerFile && (

@@ -199,7 +199,7 @@ const PageCanvas = ({ pdfDoc, pageNum, scale }) => {
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function RealPDFViewer({ file, onClose }) {
+export default function RealPDFViewer({ file, onClose, onAddFiles }) {
   const [pdfDoc, setPdfDoc]           = useState(null);
   const [numPages, setNumPages]       = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -213,6 +213,21 @@ export default function RealPDFViewer({ file, onClose }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [activeTab, setActiveTab]     = useState("thumbs");
+
+  // ── Signature state ──────────────────────────────────────────────────────────
+  const [showSignPanel, setShowSignPanel] = useState(false);
+  const [sigMode, setSigMode]         = useState("draw");   // draw | type
+  const [sigDrawing, setSigDrawing]   = useState(false);
+  const [sigHas, setSigHas]           = useState(false);
+  const [sigColor, setSigColor]       = useState("#1a1a2e");
+  const [sigTyped, setSigTyped]       = useState("");
+  const [sigFont, setSigFont]         = useState("cursive");
+  const [sigPosition, setSigPosition] = useState("bottom-right");
+  const [signing, setSigning]         = useState(false);
+  const [signSuccess, setSignSuccess] = useState(false);
+  const sigCanvasRef  = useRef();
+  const sigTypeCanvas = useRef();
+  const sigLastPos    = useRef(null);
   const [pdfInfo, setPdfInfo]         = useState({});
   const mainRef = useRef();
 
@@ -314,10 +329,147 @@ export default function RealPDFViewer({ file, onClose }) {
     win?.addEventListener("load", () => win.print());
   };
 
+  // ── Signature drawing helpers ────────────────────────────────────────────────
+  const getSigPos = (e, canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / rect.width;
+    const sy = canvas.height / rect.height;
+    if (e.touches) return {
+      x: (e.touches[0].clientX - rect.left) * sx,
+      y: (e.touches[0].clientY - rect.top)  * sy,
+    };
+    return {
+      x: (e.clientX - rect.left) * sx,
+      y: (e.clientY - rect.top)  * sy,
+    };
+  };
+
+  const sigStartDraw = (e) => {
+    e.preventDefault();
+    setSigDrawing(true);
+    sigLastPos.current = getSigPos(e, sigCanvasRef.current);
+  };
+  const sigDraw = (e) => {
+    e.preventDefault();
+    if (!sigDrawing) return;
+    const ctx = sigCanvasRef.current.getContext("2d");
+    const pos = getSigPos(e, sigCanvasRef.current);
+    ctx.beginPath();
+    ctx.moveTo(sigLastPos.current.x, sigLastPos.current.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.strokeStyle = sigColor;
+    ctx.lineWidth   = 2.5;
+    ctx.lineCap     = "round";
+    ctx.lineJoin    = "round";
+    ctx.stroke();
+    sigLastPos.current = pos;
+    setSigHas(true);
+  };
+  const sigStopDraw = () => setSigDrawing(false);
+
+  const clearSigCanvas = () => {
+    const ctx = sigCanvasRef.current?.getContext("2d");
+    if (ctx) ctx.clearRect(0, 0, sigCanvasRef.current.width, sigCanvasRef.current.height);
+    setSigHas(false);
+  };
+
+  // Re-render typed sig onto hidden canvas whenever text/font/color changes
+  useEffect(() => {
+    if (!showSignPanel || sigMode !== "type" || !sigTypeCanvas.current) return;
+    const canvas = sigTypeCanvas.current;
+    const ctx    = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!sigTyped.trim()) { setSigHas(false); return; }
+    ctx.fillStyle   = sigColor;
+    ctx.font        = `52px ${sigFont}`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(sigTyped, 10, canvas.height / 2);
+    setSigHas(true);
+  }, [sigTyped, sigFont, sigColor, sigMode, showSignPanel]);
+
+  // ── Position → coordinates on the PDF page ───────────────────────────────────
+  const getEmbedCoords = (pageW, pageH, sigW, sigH, position) => {
+    const m = 28;
+    const map = {
+      "top-left":      { x: m,                 y: pageH - m - sigH },
+      "top-center":    { x: (pageW - sigW) / 2, y: pageH - m - sigH },
+      "top-right":     { x: pageW - m - sigW,  y: pageH - m - sigH },
+      "center":        { x: (pageW - sigW) / 2, y: (pageH - sigH) / 2 },
+      "bottom-left":   { x: m,                 y: m },
+      "bottom-center": { x: (pageW - sigW) / 2, y: m },
+      "bottom-right":  { x: pageW - m - sigW,  y: m },
+    };
+    return map[position] || map["bottom-right"];
+  };
+
+  // ── Embed signature into PDF and download ───────────────────────────────────
+  const embedSignature = async () => {
+    if (!file?.raw) return;
+    if (!sigHas)    return;
+    setSigning(true);
+    setSignSuccess(false);
+    try {
+      const { PDFDocument, rgb, StandardFonts } = await import("pdf-lib");
+
+      // Get PNG bytes from whichever canvas is active
+      const activeCanvas = sigMode === "draw" ? sigCanvasRef.current : sigTypeCanvas.current;
+      const sigBytes = await new Promise((res, rej) => {
+        activeCanvas.toBlob(blob => {
+          if (!blob) { rej(new Error("Canvas is empty")); return; }
+          blob.arrayBuffer().then(res).catch(rej);
+        }, "image/png");
+      });
+
+      const buffer   = await file.raw.arrayBuffer();
+      const pdfDoc   = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const font     = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+      const sigImage = await pdfDoc.embedPng(sigBytes);
+
+      const pageIdx  = Math.min(Math.max(currentPage - 1, 0), pdfDoc.getPageCount() - 1);
+      const page     = pdfDoc.getPage(pageIdx);
+      const { width: pageW, height: pageH } = page.getSize();
+
+      // Scale signature image
+      const dims = sigImage.scaleToFit(200, 80);
+      const { x, y } = getEmbedCoords(pageW, pageH, dims.width, dims.height, sigPosition);
+
+      page.drawImage(sigImage, { x, y, width: dims.width, height: dims.height });
+
+      // Date stamp below signature
+      page.drawText(`Signed: ${new Date().toLocaleDateString()}`, {
+        x, y: y - 13, font, size: 8, color: rgb(0.5, 0.5, 0.5),
+      });
+
+      const signedBytes = await pdfDoc.save();
+      const fileName    = file.name.replace(/\.pdf$/i, "") + "_signed.pdf";
+      const blob        = new Blob([signedBytes], { type: "application/pdf" });
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Add to workspace
+      if (onAddFiles) {
+        const rawFile = new File([blob], fileName, { type: "application/pdf" });
+        onAddFiles([rawFile]);
+      }
+
+      setSigning(false);
+      setSignSuccess(true);
+      setTimeout(() => setSignSuccess(false), 4000);
+    } catch (err) {
+      console.error(err);
+      setSigning(false);
+      alert(`Signing failed: ${err.message}`);
+    }
+  };
+
   const zoomPct = Math.round(scale * 100);
 
   return (
-    <div style={S.wrap}>
+    <div style={{ ...S.wrap, position: "relative" }}>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         .ihov:hover { background: #2A2F4A !important; color: #E8E9F0 !important; }
@@ -376,6 +528,9 @@ export default function RealPDFViewer({ file, onClose }) {
         <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }}>
           <Ic path={ICO.note} size={13} /> Note
         </button>
+        <button style={{ ...S.btn(showSignPanel), background: showSignPanel ? "#2ECC71" : S.btn(false).background }} onClick={() => setShowSignPanel(v => !v)}>
+          ✍ Sign
+        </button>
         <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
 
         <button className="ihov" style={S.iconBtn} onClick={downloadPDF} title="Download">
@@ -387,6 +542,138 @@ export default function RealPDFViewer({ file, onClose }) {
       </div>
 
       <div style={S.body}>
+
+        {/* ── Inline Signature Panel ── */}
+        {showSignPanel && (
+          <div style={{
+            position: "absolute", top: 52, left: 0, right: 0, zIndex: 200,
+            background: "#13151F", borderBottom: "2px solid #2ECC71",
+            padding: "16px 20px", display: "flex", gap: 24, alignItems: "flex-start",
+            boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+          }}>
+            {/* Left — draw/type tabs */}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#2ECC71", letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 10 }}>
+                Sign this document — Page {currentPage}
+              </div>
+
+              {/* Mode tabs */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {[["draw", "✏ Draw"], ["type", "T Type"]].map(([id, lbl]) => (
+                  <button key={id} onClick={() => { setSigMode(id); setSigHas(false); }} style={{
+                    background: sigMode === id ? "#2ECC71" : "#22263A",
+                    color: sigMode === id ? "#0D0E14" : "#7B8099",
+                    border: `1px solid ${sigMode === id ? "#2ECC71" : "#2A2F4A"}`,
+                    borderRadius: 7, padding: "5px 14px", cursor: "pointer",
+                    fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                  }}>{lbl}</button>
+                ))}
+                {/* Ink colors */}
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: 10 }}>
+                  {["#1a1a2e", "#E84D4D", "#0044cc", "#006600"].map(c => (
+                    <div key={c} onClick={() => setSigColor(c)} style={{ width: 20, height: 20, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${sigColor === c ? "#fff" : "transparent"}`, transition: "border 0.1s" }} />
+                  ))}
+                </div>
+              </div>
+
+              {/* Draw canvas */}
+              {sigMode === "draw" && (
+                <div style={{ position: "relative" }}>
+                  <canvas
+                    ref={sigCanvasRef}
+                    width={480} height={90}
+                    onMouseDown={sigStartDraw} onMouseMove={sigDraw}
+                    onMouseUp={sigStopDraw}    onMouseLeave={sigStopDraw}
+                    onTouchStart={sigStartDraw} onTouchMove={sigDraw} onTouchEnd={sigStopDraw}
+                    style={{ background: "#fff", borderRadius: 8, cursor: "crosshair", display: "block", border: `2px solid ${sigHas ? "#2ECC71" : "#2A2F4A"}`, width: "100%", maxWidth: 480, touchAction: "none", transition: "border-color 0.2s" }}
+                  />
+                  {!sigHas && (
+                    <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                      <span style={{ fontSize: 13, color: "#bbb", fontStyle: "italic" }}>Draw your signature here</span>
+                    </div>
+                  )}
+                  <button onClick={clearSigCanvas} style={{ marginTop: 6, background: "transparent", border: "none", color: "#7B8099", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+                    ✕ Clear
+                  </button>
+                </div>
+              )}
+
+              {/* Type mode */}
+              {sigMode === "type" && (
+                <div>
+                  <input
+                    value={sigTyped}
+                    onChange={e => setSigTyped(e.target.value)}
+                    placeholder="Type your name…"
+                    style={{ background: "#fff", border: `2px solid ${sigHas ? "#2ECC71" : "#2A2F4A"}`, borderRadius: 8, padding: "8px 14px", color: "#1a1a2e", fontSize: 28, fontFamily: sigFont, outline: "none", width: "100%", maxWidth: 480, boxSizing: "border-box", transition: "border-color 0.2s" }}
+                  />
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    {[{ f: "cursive", l: "Cursive" }, { f: "Georgia,serif", l: "Serif" }, { f: "'Courier New',monospace", l: "Print" }].map(({ f, l }) => (
+                      <button key={f} onClick={() => setSigFont(f)} style={{ background: sigFont === f ? "rgba(46,204,113,0.15)" : "#22263A", border: `1px solid ${sigFont === f ? "#2ECC71" : "#2A2F4A"}`, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontFamily: f, color: "#E8E9F0", fontSize: 14, fontFamily: "inherit" }}>
+                        <span style={{ fontFamily: f }}>{sigTyped || l}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {/* Hidden canvas for type rendering */}
+                  <canvas ref={sigTypeCanvas} width={480} height={80} style={{ display: "none" }} />
+                </div>
+              )}
+            </div>
+
+            {/* Right — position picker + apply */}
+            <div style={{ flexShrink: 0, width: 220 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7B8099", letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 8 }}>
+                Signature position
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 14 }}>
+                {[
+                  ["top-left",      "↖"],
+                  ["top-center",    "↑"],
+                  ["top-right",     "↗"],
+                  ["center",        "⊙"],
+                  ["bottom-left",   "↙"],
+                  ["bottom-center", "↓"],
+                  ["bottom-right",  "↘"],
+                  ["", ""],
+                ].map(([id, icon], idx) => id ? (
+                  <button key={id} onClick={() => setSigPosition(id)} style={{
+                    background: sigPosition === id ? "rgba(46,204,113,0.2)" : "#22263A",
+                    border: `1.5px solid ${sigPosition === id ? "#2ECC71" : "#2A2F4A"}`,
+                    borderRadius: 6, padding: "7px 0", cursor: "pointer", fontSize: 16,
+                    color: sigPosition === id ? "#2ECC71" : "#7B8099", fontFamily: "inherit",
+                    gridColumn: id === "center" ? "2 / 3" : "auto",
+                  }} title={id.replace("-", " ")}>{icon}</button>
+                ) : <div key={idx} />)}
+              </div>
+
+              {/* Success message */}
+              {signSuccess && (
+                <div style={{ background: "rgba(46,204,113,0.15)", border: "1px solid #2ECC71", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#2ECC71", fontWeight: 600 }}>
+                  ✓ Signed PDF downloaded and added to workspace!
+                </div>
+              )}
+
+              {/* Apply button */}
+              <button
+                onClick={embedSignature}
+                disabled={!sigHas || signing}
+                style={{
+                  width: "100%", background: sigHas && !signing ? "#2ECC71" : "#22263A",
+                  color: sigHas && !signing ? "#0D0E14" : "#4A5070",
+                  border: `1px solid ${sigHas && !signing ? "#2ECC71" : "#2A2F4A"}`,
+                  borderRadius: 9, padding: "10px 0", cursor: sigHas && !signing ? "pointer" : "not-allowed",
+                  fontSize: 13, fontWeight: 700, fontFamily: "inherit", transition: "all 0.15s",
+                  marginBottom: 8,
+                }}>
+                {signing ? "Embedding signature…" : sigHas ? "✍ Apply Signature to PDF" : "Draw or type your signature first"}
+              </button>
+
+              <button onClick={() => { setShowSignPanel(false); setSigHas(false); clearSigCanvas(); setSigTyped(""); }} style={{ width: "100%", background: "transparent", border: "1px solid #2A2F4A", borderRadius: 9, padding: "7px 0", cursor: "pointer", fontSize: 12, color: "#7B8099", fontFamily: "inherit" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         {/* Left sidebar */}
         <div style={S.sidebar}>
           <div style={{ display: "flex", borderBottom: "1px solid #2A2F4A", flexShrink: 0 }}>
