@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import RealPDFViewer from "./PDFViewer";
 
 // ─── Icons (inline SVG components) ───────────────────────────────────────────
 const Icon = ({ d, size = 18, color = "currentColor", strokeWidth = 1.8 }) => (
@@ -514,27 +515,13 @@ const CreateSection = ({ onToast }) => {
     onToast(`"${title}.pdf" created successfully!`, "success");
   };
 
-  const inputStyle = {
-  width: "100%",
-  background: COLORS.surface,
-  border: `1px solid ${COLORS.border}`,
-  borderRadius: 9,
-  padding: "10px 14px",
-  color: COLORS.text,
-  fontSize: 14,
-  outline: "none",
-  boxSizing: "border-box",
-  fontFamily: "inherit"
-};
-
-const labelStyle = {
-  fontSize: 12,
-  fontWeight: 600,
-  color: COLORS.textMuted,
-  display: "block",
-  marginBottom: 6,
-  letterSpacing: "0.3px"
-};
+  const Input = ({ label, value, onChange, placeholder, type = "text" }) => (
+    <div style={{ marginBottom: 16 }}>
+      <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
+    </div>
+  );
 
   const Toggle = ({ label, checked, onChange }) => (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
@@ -563,29 +550,8 @@ const labelStyle = {
           </div>
         </div>
 
-         <div style={{ marginBottom: 16 }}>
-  <label style={labelStyle}>DOCUMENT TITLE</label>
-  <input
-    type="text"
-    value={title}
-    onChange={e => setTitle(e.target.value)}
-    placeholder="Enter document title..."
-    style={inputStyle}
-    autoComplete="off"
-  />
-</div>
-
-<div style={{ marginBottom: 16 }}>
-  <label style={labelStyle}>AUTHOR</label>
-  <input
-    type="text"
-    value={author}
-    onChange={e => setAuthor(e.target.value)}
-    placeholder="Your name..."
-    style={inputStyle}
-    autoComplete="off"
-  />
-</div>
+        <Input label="DOCUMENT TITLE" value={title} onChange={setTitle} placeholder="Enter document title..." />
+        <Input label="AUTHOR" value={author} onChange={setAuthor} placeholder="Your name..." />
 
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>CONTENT</label>
@@ -1377,11 +1343,9 @@ const ViewSection = ({ files, onAddFiles, onView, onRemove }) => (
 // ─── Main Application ─────────────────────────────────────────────────────────
 export default function PDFMasterApp() {
   const [activeModule, setActiveModule] = useState("dashboard");
-  const [files, setFiles] = useState([
-    { name: "Annual_Report_2025.pdf", size: 245760, pages: 24, modified: "Today, 9:41 AM" },
-    { name: "Contract_v2.pdf", size: 102400, pages: 8, modified: "Yesterday" },
-    { name: "Invoice_March.pdf", size: 51200, pages: 2, modified: "Mar 18, 2025" },
-  ]);
+  // Files now store the real File object in the .raw property
+  // so the PDF viewer can actually open and render them
+  const [files, setFiles] = useState([]);
   const [viewerFile, setViewerFile] = useState(null);
   const [toast, setToast] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -1500,8 +1464,8 @@ export default function PDFMasterApp() {
         </div>
       </div>
 
-      {/* PDF Viewer Overlay */}
-      {viewerFile && <PDFViewer file={viewerFile} onClose={() => setViewerFile(null)} />}
+      {/* PDF Viewer Overlay — Real PDF.js viewer */}
+      {viewerFile && <RealPDFViewer file={viewerFile} onClose={() => setViewerFile(null)} />}
 
       {/* Toast */}
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
