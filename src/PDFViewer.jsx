@@ -216,15 +216,22 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
 
   // ── Signature state ──────────────────────────────────────────────────────────
   const [showSignPanel, setShowSignPanel] = useState(false);
-  const [sigMode, setSigMode]         = useState("draw");   // draw | type
+  const [sigMode, setSigMode]         = useState("draw");
   const [sigDrawing, setSigDrawing]   = useState(false);
   const [sigHas, setSigHas]           = useState(false);
   const [sigColor, setSigColor]       = useState("#1a1a2e");
   const [sigTyped, setSigTyped]       = useState("");
   const [sigFont, setSigFont]         = useState("cursive");
-  const [sigPosition, setSigPosition] = useState("bottom-right");
   const [signing, setSigning]         = useState(false);
   const [signSuccess, setSignSuccess] = useState(false);
+
+  // Click-to-place state
+  const [placingMode, setPlacingMode] = useState(false);   // crosshair cursor, waiting for click
+  const [sigPreview, setSigPreview]   = useState(null);    // { x, y, w, h } in page pixels
+  const [sigDragging, setSigDragging] = useState(false);
+  const [sigDragOffset, setSigDragOffset] = useState({ x: 0, y: 0 });
+  const [sigImageUrl, setSigImageUrl] = useState(null);    // data URL for preview img
+  const pageWrapRef   = useRef();    // ref on the page wrapper div for click coords
   const sigCanvasRef  = useRef();
   const sigTypeCanvas = useRef();
   const sigLastPos    = useRef(null);
@@ -387,39 +394,114 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
     setSigHas(true);
   }, [sigTyped, sigFont, sigColor, sigMode, showSignPanel]);
 
-  // ── Position → coordinates on the PDF page ───────────────────────────────────
-  const getEmbedCoords = (pageW, pageH, sigW, sigH, position) => {
-    const m = 28;
-    const map = {
-      "top-left":      { x: m,                 y: pageH - m - sigH },
-      "top-center":    { x: (pageW - sigW) / 2, y: pageH - m - sigH },
-      "top-right":     { x: pageW - m - sigW,  y: pageH - m - sigH },
-      "center":        { x: (pageW - sigW) / 2, y: (pageH - sigH) / 2 },
-      "bottom-left":   { x: m,                 y: m },
-      "bottom-center": { x: (pageW - sigW) / 2, y: m },
-      "bottom-right":  { x: pageW - m - sigW,  y: m },
-    };
-    return map[position] || map["bottom-right"];
+  // ── Get PNG bytes from active signature canvas ───────────────────────────────
+  const getSigBytes = () => new Promise((res, rej) => {
+    const canvas = sigMode === "draw" ? sigCanvasRef.current : sigTypeCanvas.current;
+    if (!canvas) { rej(new Error("No canvas")); return; }
+    canvas.toBlob(blob => {
+      if (!blob) { rej(new Error("Canvas is empty — draw or type your signature first.")); return; }
+      blob.arrayBuffer().then(res).catch(rej);
+    }, "image/png");
+  });
+
+  // ── Generate a data URL from the active canvas for the draggable preview ────
+  const buildSigImageUrl = () => new Promise(res => {
+    const canvas = sigMode === "draw" ? sigCanvasRef.current : sigTypeCanvas.current;
+    if (!canvas) { res(null); return; }
+    res(canvas.toDataURL("image/png"));
+  });
+
+  // ── Step 1: User clicks "Place on page" ──────────────────────────────────────
+  // Captures the signature image, enters placing mode (crosshair cursor)
+  const startPlacing = async () => {
+    if (!sigHas) return;
+    const url = await buildSigImageUrl();
+    setSigImageUrl(url);
+    setShowSignPanel(false);   // close panel so page is fully visible
+    setPlacingMode(true);      // cursor becomes crosshair
+    setSigPreview(null);       // clear any previous preview
   };
 
-  // ── Embed signature into PDF and download ───────────────────────────────────
+  // ── Step 2: User clicks on the page ─────────────────────────────────────────
+  // Drops the draggable signature preview at that exact spot
+  const handlePageClick = (e) => {
+    if (!placingMode) return;
+    const rect = pageWrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const previewW = 200;
+    const previewH = 70;
+    setSigPreview({
+      x: Math.max(0, Math.min(x - previewW / 2, rect.width  - previewW)),
+      y: Math.max(0, Math.min(y - previewH / 2, rect.height - previewH)),
+      w: previewW,
+      h: previewH,
+    });
+    setPlacingMode(false);   // crosshair off — now in drag-to-reposition mode
+  };
+
+  // ── Step 3: User drags the preview to fine-tune ──────────────────────────────
+  const onPreviewMouseDown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!sigPreview || !pageWrapRef.current) return;
+    const rect = pageWrapRef.current.getBoundingClientRect();
+    setSigDragging(true);
+    setSigDragOffset({
+      x: e.clientX - rect.left - sigPreview.x,
+      y: e.clientY - rect.top  - sigPreview.y,
+    });
+  };
+
+  // ── Attach drag handlers to window so drag never breaks on fast moves ────────
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!sigDragging || !sigPreview || !pageWrapRef.current) return;
+      const rect = pageWrapRef.current.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const nx = clientX - rect.left - sigDragOffset.x;
+      const ny = clientY - rect.top  - sigDragOffset.y;
+      setSigPreview(prev => ({
+        ...prev,
+        x: Math.max(0, Math.min(nx, rect.width  - prev.w)),
+        y: Math.max(0, Math.min(ny, rect.height - prev.h)),
+      }));
+    };
+    const onUp = () => setSigDragging(false);
+
+    window.addEventListener("mousemove",  onMove);
+    window.addEventListener("mouseup",    onUp);
+    window.addEventListener("touchmove",  onMove, { passive: false });
+    window.addEventListener("touchend",   onUp);
+
+    return () => {
+      window.removeEventListener("mousemove",  onMove);
+      window.removeEventListener("mouseup",    onUp);
+      window.removeEventListener("touchmove",  onMove);
+      window.removeEventListener("touchend",   onUp);
+    };
+  }, [sigDragging, sigPreview, sigDragOffset]);
+
+  // ── Step 4: Convert preview screen position → PDF coordinate ────────────────
+  // The page is rendered at `scale` so we divide by scale to get PDF points
+  const previewToPdfCoords = (preview, pageW, pageH) => {
+    const pdfX  =  preview.x / scale;
+    // PDF y=0 is at the bottom; screen y=0 is at the top
+    const pdfY  = pageH - (preview.y / scale) - (preview.h / scale);
+    return { x: pdfX, y: pdfY };
+  };
+
+  // ── Step 5: Embed signature at the preview position ─────────────────────────
   const embedSignature = async () => {
-    if (!file?.raw) return;
-    if (!sigHas)    return;
+    if (!file?.raw || !sigPreview) return;
     setSigning(true);
     setSignSuccess(false);
     try {
       const { PDFDocument, rgb, StandardFonts } = await import("pdf-lib");
 
-      // Get PNG bytes from whichever canvas is active
-      const activeCanvas = sigMode === "draw" ? sigCanvasRef.current : sigTypeCanvas.current;
-      const sigBytes = await new Promise((res, rej) => {
-        activeCanvas.toBlob(blob => {
-          if (!blob) { rej(new Error("Canvas is empty")); return; }
-          blob.arrayBuffer().then(res).catch(rej);
-        }, "image/png");
-      });
-
+      const sigBytes = await getSigBytes();
       const buffer   = await file.raw.arrayBuffer();
       const pdfDoc   = await PDFDocument.load(buffer, { ignoreEncryption: true });
       const font     = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
@@ -429,36 +511,66 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       const page     = pdfDoc.getPage(pageIdx);
       const { width: pageW, height: pageH } = page.getSize();
 
-      // Scale signature image
-      const dims = sigImage.scaleToFit(200, 80);
-      const { x, y } = getEmbedCoords(pageW, pageH, dims.width, dims.height, sigPosition);
+      // Scale to a sensible size
+      const dims  = sigImage.scaleToFit(sigPreview.w / scale, sigPreview.h / scale);
+      const { x, y } = previewToPdfCoords(sigPreview, pageW, pageH);
 
+      // Draw signature
       page.drawImage(sigImage, { x, y, width: dims.width, height: dims.height });
 
-      // Date stamp below signature
+      // Thin underline
+      page.drawLine({
+        start: { x, y: y - 2 },
+        end:   { x: x + dims.width, y: y - 2 },
+        thickness: 0.5,
+        color: rgb(0.7, 0.7, 0.7),
+      });
+
+      // Date stamp
       page.drawText(`Signed: ${new Date().toLocaleDateString()}`, {
         x, y: y - 13, font, size: 8, color: rgb(0.5, 0.5, 0.5),
       });
 
+      // Save
       const signedBytes = await pdfDoc.save();
       const fileName    = file.name.replace(/\.pdf$/i, "") + "_signed.pdf";
       const blob        = new Blob([signedBytes], { type: "application/pdf" });
+      const rawFile     = new File([blob], fileName, { type: "application/pdf" });
 
       // Download
-      const url = URL.createObjectURL(blob);
-      const a   = document.createElement("a");
-      a.href = url; a.download = fileName; a.click();
-      URL.revokeObjectURL(url);
+      const dlUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = dlUrl; a.download = fileName; a.click();
+      URL.revokeObjectURL(dlUrl);
 
       // Add to workspace
-      if (onAddFiles) {
-        const rawFile = new File([blob], fileName, { type: "application/pdf" });
-        onAddFiles([rawFile]);
-      }
+      if (onAddFiles) onAddFiles([rawFile]);
 
+      // Reload viewer with signed PDF
+      const signedBuffer = await rawFile.arrayBuffer();
+      const signedDoc    = await pdfjsLib.getDocument({ data: signedBuffer }).promise;
+      const meta         = await signedDoc.getMetadata().catch(() => ({}));
+      setPdfDoc(signedDoc);
+      setNumPages(signedDoc.numPages);
+      setCurrentPage(pageIdx + 1);
+      setPdfInfo({
+        title:  meta?.info?.Title || fileName,
+        author: meta?.info?.Author || "—",
+        pages:  signedDoc.numPages,
+      });
+      file.name = fileName;
+      file.raw  = rawFile;
+
+      // Reset
       setSigning(false);
       setSignSuccess(true);
-      setTimeout(() => setSignSuccess(false), 4000);
+      setSigPreview(null);
+      setSigImageUrl(null);
+      setSigHas(false);
+      clearSigCanvas();
+      setSigTyped("");
+      setTimeout(() => setSignSuccess(false), 5000);
+
     } catch (err) {
       console.error(err);
       setSigning(false);
@@ -543,7 +655,26 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
 
       <div style={S.body}>
 
-        {/* ── Inline Signature Panel ── */}
+        {/* ── Sign success banner ── */}
+        {signSuccess && (
+          <div style={{
+            position: "absolute", top: 52, left: 0, right: 0, zIndex: 300,
+            background: "rgba(46,204,113,0.95)", padding: "12px 20px",
+            display: "flex", alignItems: "center", gap: 12,
+            boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+          }}>
+            <span style={{ fontSize: 20 }}>✅</span>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#0D0E14" }}>
+                Document signed successfully!
+              </div>
+              <div style={{ fontSize: 12, color: "#1a4a2a", marginTop: 2 }}>
+                The signed PDF is now open in the viewer. A copy was downloaded to your computer and saved to your workspace.
+              </div>
+            </div>
+            <button onClick={() => setSignSuccess(false)} style={{ marginLeft: "auto", background: "transparent", border: "none", cursor: "pointer", fontSize: 18, color: "#0D0E14", fontWeight: 700 }}>✕</button>
+          </div>
+        )}
         {showSignPanel && (
           <div style={{
             position: "absolute", top: 52, left: 0, right: 0, zIndex: 200,
@@ -620,52 +751,33 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
               )}
             </div>
 
-            {/* Right — position picker + apply */}
+            {/* Right — place + apply */}
             <div style={{ flexShrink: 0, width: 220 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#7B8099", letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 8 }}>
-                Signature position
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginBottom: 14 }}>
-                {[
-                  ["top-left",      "↖"],
-                  ["top-center",    "↑"],
-                  ["top-right",     "↗"],
-                  ["center",        "⊙"],
-                  ["bottom-left",   "↙"],
-                  ["bottom-center", "↓"],
-                  ["bottom-right",  "↘"],
-                  ["", ""],
-                ].map(([id, icon], idx) => id ? (
-                  <button key={id} onClick={() => setSigPosition(id)} style={{
-                    background: sigPosition === id ? "rgba(46,204,113,0.2)" : "#22263A",
-                    border: `1.5px solid ${sigPosition === id ? "#2ECC71" : "#2A2F4A"}`,
-                    borderRadius: 6, padding: "7px 0", cursor: "pointer", fontSize: 16,
-                    color: sigPosition === id ? "#2ECC71" : "#7B8099", fontFamily: "inherit",
-                    gridColumn: id === "center" ? "2 / 3" : "auto",
-                  }} title={id.replace("-", " ")}>{icon}</button>
-                ) : <div key={idx} />)}
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#7B8099", letterSpacing: ".5px", textTransform: "uppercase", marginBottom: 10 }}>
+                How to place
               </div>
 
-              {/* Success message */}
-              {signSuccess && (
-                <div style={{ background: "rgba(46,204,113,0.15)", border: "1px solid #2ECC71", borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 12, color: "#2ECC71", fontWeight: 600 }}>
-                  ✓ Signed PDF downloaded and added to workspace!
-                </div>
-              )}
+              <div style={{ background: "#0D0E14", border: "1px solid #2A2F4A", borderRadius: 8, padding: "10px 12px", marginBottom: 14, fontSize: 12, color: "#7B8099", lineHeight: 1.6 }}>
+                1. Draw or type your signature<br />
+                2. Click <b style={{ color: "#2ECC71" }}>Place on page</b><br />
+                3. Click anywhere on the PDF<br />
+                4. Drag to fine-tune position<br />
+                5. Click <b style={{ color: "#2ECC71" }}>Confirm & Sign</b>
+              </div>
 
-              {/* Apply button */}
               <button
-                onClick={embedSignature}
-                disabled={!sigHas || signing}
+                onClick={startPlacing}
+                disabled={!sigHas}
                 style={{
-                  width: "100%", background: sigHas && !signing ? "#2ECC71" : "#22263A",
-                  color: sigHas && !signing ? "#0D0E14" : "#4A5070",
-                  border: `1px solid ${sigHas && !signing ? "#2ECC71" : "#2A2F4A"}`,
-                  borderRadius: 9, padding: "10px 0", cursor: sigHas && !signing ? "pointer" : "not-allowed",
-                  fontSize: 13, fontWeight: 700, fontFamily: "inherit", transition: "all 0.15s",
-                  marginBottom: 8,
+                  width: "100%",
+                  background: sigHas ? "rgba(46,204,113,0.15)" : "#22263A",
+                  color: sigHas ? "#2ECC71" : "#4A5070",
+                  border: `1.5px solid ${sigHas ? "#2ECC71" : "#2A2F4A"}`,
+                  borderRadius: 9, padding: "10px 0", cursor: sigHas ? "pointer" : "not-allowed",
+                  fontSize: 13, fontWeight: 700, fontFamily: "inherit",
+                  transition: "all 0.15s", marginBottom: 8,
                 }}>
-                {signing ? "Embedding signature…" : sigHas ? "✍ Apply Signature to PDF" : "Draw or type your signature first"}
+                {sigHas ? "👆 Place on page" : "Create signature first"}
               </button>
 
               <button onClick={() => { setShowSignPanel(false); setSigHas(false); clearSigCanvas(); setSigTyped(""); }} style={{ width: "100%", background: "transparent", border: "1px solid #2A2F4A", borderRadius: 9, padding: "7px 0", cursor: "pointer", fontSize: 12, color: "#7B8099", fontFamily: "inherit" }}>
@@ -742,7 +854,28 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         </div>
 
         {/* Main page view */}
-        <div style={S.mainArea} ref={mainRef}>
+        <div
+          style={{ ...S.mainArea, cursor: placingMode ? "crosshair" : "default" }}
+          ref={mainRef}
+        >
+          {/* Placing mode instruction banner */}
+          {placingMode && (
+            <div style={{
+              position: "sticky", top: 0, zIndex: 50,
+              background: "rgba(46,204,113,0.92)", padding: "10px 20px",
+              display: "flex", alignItems: "center", gap: 12,
+              borderRadius: 8, marginBottom: 12, width: "100%", boxSizing: "border-box",
+            }}>
+              <span style={{ fontSize: 18 }}>👆</span>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#0D0E14" }}>
+                Click anywhere on the page below to place your signature
+              </div>
+              <button onClick={() => { setPlacingMode(false); setShowSignPanel(true); }} style={{ marginLeft: "auto", background: "rgba(0,0,0,0.2)", border: "none", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 12, color: "#0D0E14", fontWeight: 600, fontFamily: "inherit" }}>
+                ← Back
+              </button>
+            </div>
+          )}
+
           {loading && (
             <div style={S.loading}>
               <div style={S.spinner} />
@@ -755,9 +888,139 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
               <div style={{ fontSize: 12, opacity: .8 }}>{error}</div>
             </div>
           )}
+
           {pdfDoc && !loading && !error && viewMode === "single" && (
-            <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale} />
+            <div
+              ref={pageWrapRef}
+              style={{ position: "relative", display: "inline-block" }}
+              onClick={handlePageClick}
+            >
+              <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale} />
+
+              {/* Draggable signature preview */}
+              {sigPreview && sigImageUrl && (
+                <div
+                  onMouseDown={onPreviewMouseDown}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!sigPreview || !pageWrapRef.current) return;
+                    const rect = pageWrapRef.current.getBoundingClientRect();
+                    setSigDragging(true);
+                    setSigDragOffset({
+                      x: e.touches[0].clientX - rect.left - sigPreview.x,
+                      y: e.touches[0].clientY - rect.top  - sigPreview.y,
+                    });
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: sigPreview.x,
+                    top: sigPreview.y,
+                    width: sigPreview.w,
+                    height: sigPreview.h,
+                    cursor: sigDragging ? "grabbing" : "grab",
+                    border: "2px dashed #2ECC71",
+                    borderRadius: 6,
+                    background: "rgba(255,255,255,0.92)",
+                    boxShadow: sigDragging
+                      ? "0 8px 32px rgba(46,204,113,0.6)"
+                      : "0 4px 20px rgba(46,204,113,0.35)",
+                    display: "flex",
+                    flexDirection: "column",
+                    userSelect: "none",
+                    zIndex: 100,
+                    overflow: "hidden",
+                    transition: sigDragging ? "none" : "box-shadow 0.15s",
+                  }}
+                >
+                  {/* Drag handle bar */}
+                  <div style={{
+                    background: sigDragging ? "#27AE60" : "#2ECC71",
+                    padding: "4px 8px",
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    flexShrink: 0, cursor: sigDragging ? "grabbing" : "grab",
+                    transition: "background 0.1s",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      {/* Grip dots */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                        {[...Array(6)].map((_, i) => (
+                          <div key={i} style={{ width: 3, height: 3, background: "rgba(0,0,0,0.35)", borderRadius: "50%" }} />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#0D0E14", letterSpacing: ".3px" }}>
+                        {sigDragging ? "Dragging…" : "Drag to move"}
+                      </span>
+                    </div>
+                    <button
+                      onMouseDown={e => e.stopPropagation()}
+                      onClick={e => {
+                        e.stopPropagation();
+                        setSigPreview(null);
+                        setSigImageUrl(null);
+                        setShowSignPanel(true);
+                      }}
+                      style={{ background: "rgba(0,0,0,0.15)", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 11, color: "#0D0E14", fontWeight: 700, lineHeight: 1, padding: "2px 6px", fontFamily: "inherit" }}
+                    >✕ Cancel</button>
+                  </div>
+
+                  {/* Signature image preview */}
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "4px 8px" }}>
+                    <img src={sigImageUrl} alt="Signature preview" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Confirm & Sign button — floats below the preview */}
+              {sigPreview && !signing && (
+                <div style={{
+                  position: "absolute",
+                  left: sigPreview.x,
+                  top: sigPreview.y + sigPreview.h + 8,
+                  zIndex: 101,
+                  display: "flex",
+                  gap: 6,
+                }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); embedSignature(); }}
+                    style={{
+                      background: "#2ECC71", color: "#0D0E14",
+                      border: "none", borderRadius: 7,
+                      padding: "7px 16px", cursor: "pointer",
+                      fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                      boxShadow: "0 2px 10px rgba(46,204,113,0.5)",
+                    }}>
+                    ✍ Confirm & Sign
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); setSigPreview(null); setSigImageUrl(null); setShowSignPanel(true); }}
+                    style={{
+                      background: "rgba(0,0,0,0.6)", color: "#fff",
+                      border: "none", borderRadius: 7,
+                      padding: "7px 12px", cursor: "pointer",
+                      fontSize: 12, fontWeight: 600, fontFamily: "inherit",
+                    }}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+
+              {/* Signing in progress */}
+              {signing && (
+                <div style={{
+                  position: "absolute", inset: 0, background: "rgba(0,0,0,0.3)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  zIndex: 200, borderRadius: 4,
+                }}>
+                  <div style={{ background: "#13151F", border: "1px solid #2ECC71", borderRadius: 12, padding: "20px 32px", textAlign: "center" }}>
+                    <div style={{ fontSize: 28, marginBottom: 10 }}>✍</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#2ECC71" }}>Embedding signature…</div>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
+
           {pdfDoc && !loading && !error && viewMode === "continuous" && (
             Array.from({ length: numPages }, (_, i) => i + 1).map(n => (
               <div key={n} data-page={n}>
