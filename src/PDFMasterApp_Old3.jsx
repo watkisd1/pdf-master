@@ -783,7 +783,7 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
 };
 
 // ─── Section: Merge & Split ───────────────────────────────────────────────────
-const MergeSection = ({ files, onToast, onAddFiles }) => {
+const MergeSection = ({ files, onToast }) => {
   const [tab, setTab] = useState("merge");
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [outputName, setOutputName] = useState("merged_document");
@@ -792,148 +792,22 @@ const MergeSection = ({ files, onToast, onAddFiles }) => {
   const [splitRange, setSplitRange] = useState("");
   const [splitEvery, setSplitEvery] = useState(1);
   const [reorderFiles, setReorderFiles] = useState([...files]);
-  const [merging, setMerging] = useState(false);
-  const [splitting, setSplitting] = useState(false);
-  const [progress, setProgress] = useState(0);
-
-  // Keep reorderFiles in sync when files prop changes
-  useEffect(() => { setReorderFiles([...files]); }, [files]);
 
   const toggleSelect = (f) => setSelectedFiles(s => s.includes(f) ? s.filter(x => x !== f) : [...s, f]);
-  const moveUp   = (i) => { if (i === 0) return; const a = [...reorderFiles]; [a[i-1],a[i]]=[a[i],a[i-1]]; setReorderFiles(a); };
-  const moveDown = (i) => { if (i >= reorderFiles.length-1) return; const a = [...reorderFiles]; [a[i],a[i+1]]=[a[i+1],a[i]]; setReorderFiles(a); };
 
-  // ── Parse a page range string like "1-3, 5, 7-10" into an array of 0-based indices
-  const parsePageRange = (rangeStr, totalPages) => {
-    const indices = new Set();
-    const parts = rangeStr.split(",").map(s => s.trim()).filter(Boolean);
-    for (const part of parts) {
-      if (part.includes("-")) {
-        const [start, end] = part.split("-").map(Number);
-        for (let i = start; i <= end; i++) {
-          if (i >= 1 && i <= totalPages) indices.add(i - 1);
-        }
-      } else {
-        const n = Number(part);
-        if (n >= 1 && n <= totalPages) indices.add(n - 1);
-      }
-    }
-    return Array.from(indices).sort((a, b) => a - b);
-  };
-
-  // ── Download helper
-  const downloadBlob = (bytes, fileName) => {
-    const blob = new Blob([bytes], { type: "application/pdf" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url; a.download = fileName; a.click();
-    URL.revokeObjectURL(url);
-    return blob;
-  };
-
-  // ── MERGE ─────────────────────────────────────────────────────────────────────
-  const handleMerge = async () => {
+  const handleMerge = () => {
     if (selectedFiles.length < 2) { onToast("Select at least 2 files to merge.", "error"); return; }
-    const missing = selectedFiles.filter(f => !f.raw);
-    if (missing.length > 0) {
-      onToast(`"${missing[0].name}" has no file data. Please re-upload it.`, "error");
-      return;
-    }
-    setMerging(true);
-    setProgress(0);
-    try {
-      const { PDFDocument } = await import("pdf-lib");
-      const merged = await PDFDocument.create();
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const f       = selectedFiles[i];
-        const buffer  = await f.raw.arrayBuffer();
-        const srcPdf  = await PDFDocument.load(buffer, { ignoreEncryption: true });
-        const indices = srcPdf.getPageIndices();
-        const copied  = await merged.copyPages(srcPdf, indices);
-        copied.forEach(page => merged.addPage(page));
-        setProgress(Math.round(((i + 1) / selectedFiles.length) * 85));
-      }
-
-      merged.setTitle(outputName);
-      merged.setCreationDate(new Date());
-      const bytes    = await merged.save();
-      const fileName = `${outputName.trim() || "merged"}.pdf`;
-      const blob     = downloadBlob(bytes, fileName);
-
-      // Add to workspace
-      const rawFile = new File([blob], fileName, { type: "application/pdf" });
-      if (onAddFiles) onAddFiles([rawFile]);
-
-      setProgress(100);
-      onToast(`✓ Merged ${selectedFiles.length} files into "${fileName}"`, "success");
-      setSelectedFiles([]);
-      setTimeout(() => { setMerging(false); setProgress(0); }, 600);
-    } catch (err) {
-      console.error(err);
-      onToast(`Merge failed: ${err.message}`, "error");
-      setMerging(false);
-      setProgress(0);
-    }
+    onToast(`Merged ${selectedFiles.length} files into "${outputName}.pdf"`, "success");
+    setSelectedFiles([]);
   };
 
-  // ── SPLIT ─────────────────────────────────────────────────────────────────────
-  const handleSplit = async () => {
+  const handleSplit = () => {
     if (!splitFile) { onToast("Select a file to split.", "error"); return; }
-    if (!splitFile.raw) { onToast("No file data found. Please re-upload the file.", "error"); return; }
-    setSplitting(true);
-    setProgress(0);
-    try {
-      const { PDFDocument } = await import("pdf-lib");
-      const buffer   = await splitFile.raw.arrayBuffer();
-      const srcPdf   = await PDFDocument.load(buffer, { ignoreEncryption: true });
-      const total    = srcPdf.getPageCount();
-      const baseName = splitFile.name.replace(/\.pdf$/i, "");
-
-      // Build list of page groups based on split mode
-      let groups = [];
-      if (splitMode === "pages") {
-        if (!splitRange.trim()) { onToast("Enter a page range first.", "error"); setSplitting(false); return; }
-        const indices = parsePageRange(splitRange, total);
-        if (indices.length === 0) { onToast("No valid pages found in that range.", "error"); setSplitting(false); return; }
-        groups = [{ indices, suffix: `_pages_${splitRange.replace(/\s/g, "")}` }];
-      } else if (splitMode === "every") {
-        const n = Math.max(1, parseInt(splitEvery) || 1);
-        for (let start = 0; start < total; start += n) {
-          const end     = Math.min(start + n, total);
-          const indices = Array.from({ length: end - start }, (_, i) => start + i);
-          groups.push({ indices, suffix: `_part${Math.floor(start / n) + 1}` });
-        }
-      } else {
-        // Individual pages
-        groups = Array.from({ length: total }, (_, i) => ({ indices: [i], suffix: `_page${i + 1}` }));
-      }
-
-      let count = 0;
-      for (const group of groups) {
-        const newPdf  = await PDFDocument.create();
-        const copied  = await newPdf.copyPages(srcPdf, group.indices);
-        copied.forEach(p => newPdf.addPage(p));
-        const bytes    = await newPdf.save();
-        const fileName = `${baseName}${group.suffix}.pdf`;
-        const blob     = downloadBlob(bytes, fileName);
-        const rawFile  = new File([blob], fileName, { type: "application/pdf" });
-        if (onAddFiles) onAddFiles([rawFile]);
-        count++;
-        setProgress(Math.round((count / groups.length) * 100));
-        // Small delay between downloads so browser doesn't block them
-        if (groups.length > 1) await new Promise(r => setTimeout(r, 120));
-      }
-
-      onToast(`✓ Split into ${count} file${count > 1 ? "s" : ""} — check your downloads!`, "success");
-      setSplitting(false);
-      setProgress(0);
-    } catch (err) {
-      console.error(err);
-      onToast(`Split failed: ${err.message}`, "error");
-      setSplitting(false);
-      setProgress(0);
-    }
+    onToast(`Split "${splitFile.name}" successfully!`, "success");
   };
+
+  const moveUp = (i) => { if (i === 0) return; const a = [...reorderFiles]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; setReorderFiles(a); };
+  const moveDown = (i) => { if (i >= reorderFiles.length - 1) return; const a = [...reorderFiles]; [a[i], a[i + 1]] = [a[i + 1], a[i]]; setReorderFiles(a); };
 
   const TabBtn = ({ id, label }) => (
     <button onClick={() => setTab(id)} style={{ background: tab === id ? COLORS.accent : "transparent", color: tab === id ? COLORS.white : COLORS.textMuted, border: `1px solid ${tab === id ? COLORS.accent : COLORS.border}`, borderRadius: 9, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.15s" }}>
@@ -982,19 +856,7 @@ const MergeSection = ({ files, onToast, onAddFiles }) => {
                   style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
               </div>
               <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 16 }}>{selectedFiles.length} file(s) selected</div>
-              {merging && (
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
-                    <span>Merging…</span><span>{progress}%</span>
-                  </div>
-                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
-                    <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
-                  </div>
-                </div>
-              )}
-              <Btn onClick={handleMerge} icon={icons.merge} disabled={selectedFiles.length < 2 || merging} style={{ width: "100%", justifyContent: "center" }}>
-                {merging ? "Merging…" : "Merge Selected"}
-              </Btn>
+              <Btn onClick={handleMerge} icon={icons.merge} disabled={selectedFiles.length < 2} style={{ width: "100%", justifyContent: "center" }}>Merge Selected</Btn>
             </div>
           </div>
         </div>
@@ -1019,7 +881,7 @@ const MergeSection = ({ files, onToast, onAddFiles }) => {
           <div>
             <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px" }}>
               <h3 style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Split Options</h3>
-              {[["pages", "By Page Range"], ["every", "Every N Pages"], ["individual", "Individual Pages"]].map(([id, lbl]) => (
+              {[["pages", "By Page Range"], ["every", "Every N Pages"], ["bookmarks", "By Bookmarks"]].map(([id, lbl]) => (
                 <div key={id} onClick={() => setSplitMode(id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
                   <div style={{ width: 16, height: 16, border: `2px solid ${splitMode === id ? COLORS.teal : COLORS.border}`, borderRadius: "50%", background: splitMode === id ? COLORS.teal : "transparent" }} />
                   <span style={{ fontSize: 13, color: COLORS.text }}>{lbl}</span>
@@ -1033,19 +895,7 @@ const MergeSection = ({ files, onToast, onAddFiles }) => {
                 <input type="number" value={splitEvery} onChange={e => setSplitEvery(e.target.value)} min={1}
                   style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 12, boxSizing: "border-box" }} />
               )}
-              {splitting && (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
-                    <span>Splitting…</span><span>{progress}%</span>
-                  </div>
-                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
-                    <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.teal}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
-                  </div>
-                </div>
-              )}
-              <Btn onClick={handleSplit} variant="teal" icon={icons.split} disabled={!splitFile || splitting} style={{ width: "100%", justifyContent: "center", marginTop: 16 }}>
-                {splitting ? "Splitting…" : "Split PDF"}
-              </Btn>
+              <Btn onClick={handleSplit} variant="teal" icon={icons.split} disabled={!splitFile} style={{ width: "100%", justifyContent: "center", marginTop: 16 }}>Split PDF</Btn>
             </div>
           </div>
         </div>
