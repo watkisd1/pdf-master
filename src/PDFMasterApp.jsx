@@ -3117,62 +3117,347 @@ const SecuritySection = ({ files, onToast, onAddFiles }) => {
 };
 
 // ─── Section: Search ──────────────────────────────────────────────────────────
-const SearchSection = ({ files, onToast }) => {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
+const SearchSection = ({ files, onToast, onView }) => {
+  const [query, setQuery]           = useState("");
+  const [results, setResults]       = useState([]);
+  const [searching, setSearching]   = useState(false);
+  const [indexed, setIndexed]       = useState(false);
+  const [indexing, setIndexing]     = useState(false);
+  const [indexProgress, setIndexProgress] = useState(0);
+  const [indexMsg, setIndexMsg]     = useState("");
+  const [searchIndex, setSearchIndex] = useState({}); // { filename: [{page, text}] }
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord]   = useState(false);
+  const [filterFile, setFilterFile] = useState("all");
+  const [lastQuery, setLastQuery]   = useState("");
 
-  const mockSearch = () => {
-    if (!query.trim()) return;
+  const pdfFiles = files.filter(f => f.name?.toLowerCase().endsWith(".pdf") && f.raw);
+
+  // ── Build full-text index across all PDFs ────────────────────────────────────
+  const buildIndex = async () => {
+    if (pdfFiles.length === 0) {
+      onToast("Upload some PDF files first.", "error");
+      return;
+    }
+    setIndexing(true);
+    setIndexed(false);
+    setSearchIndex({});
+    setResults([]);
+    setIndexProgress(0);
+
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        (window.location.origin || "") + "/pdf.worker.min.js";
+
+      const newIndex = {};
+
+      for (let fi = 0; fi < pdfFiles.length; fi++) {
+        const file = pdfFiles[fi];
+        setIndexMsg(`Indexing ${file.name} (${fi + 1}/${pdfFiles.length})…`);
+        setIndexProgress(Math.round((fi / pdfFiles.length) * 90));
+
+        try {
+          const buffer = await file.raw.arrayBuffer();
+          const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
+          const pages  = [];
+
+          for (let p = 1; p <= pdfDoc.numPages; p++) {
+            const page    = await pdfDoc.getPage(p);
+            const content = await page.getTextContent();
+            const text    = content.items.map(item => item.str).join(" ").trim();
+            if (text) pages.push({ page: p, text });
+          }
+
+          newIndex[file.name] = pages;
+        } catch (err) {
+          console.warn(`Could not index ${file.name}:`, err.message);
+          newIndex[file.name] = [];
+        }
+      }
+
+      setSearchIndex(newIndex);
+      setIndexed(true);
+      setIndexing(false);
+      setIndexProgress(100);
+      setIndexMsg("");
+
+      const totalPages = Object.values(newIndex).reduce((sum, pages) => sum + pages.length, 0);
+      onToast(`✓ Indexed ${pdfFiles.length} file(s) — ${totalPages} pages searchable`, "success");
+    } catch (err) {
+      console.error(err);
+      setIndexing(false);
+      setIndexMsg("");
+      onToast(`Indexing failed: ${err.message}`, "error");
+    }
+  };
+
+  // ── Highlight matching text in snippet ───────────────────────────────────────
+  const highlightText = (text, q) => {
+    if (!q) return text;
+    const flags = caseSensitive ? "g" : "gi";
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = wholeWord ? `\\b${escaped}\\b` : escaped;
+    try {
+      const parts = text.split(new RegExp(`(${pattern})`, flags));
+      return parts.map((part, i) => {
+        const isMatch = new RegExp(`^${pattern}$`, caseSensitive ? "" : "i").test(part);
+        return isMatch
+          ? `<mark style="background:#FFD700;color:#1A1A2A;border-radius:2px;padding:0 2px;">${part}</mark>`
+          : part;
+      }).join("");
+    } catch { return text; }
+  };
+
+  // ── Extract snippet around the match ────────────────────────────────────────
+  const getSnippet = (text, q, maxLen = 200) => {
+    const lower   = caseSensitive ? text : text.toLowerCase();
+    const qLower  = caseSensitive ? q : q.toLowerCase();
+    const idx     = lower.indexOf(qLower);
+    if (idx === -1) return text.substring(0, maxLen) + "…";
+    const start   = Math.max(0, idx - 80);
+    const end     = Math.min(text.length, idx + qLower.length + 120);
+    return (start > 0 ? "…" : "") + text.substring(start, end) + (end < text.length ? "…" : "");
+  };
+
+  // ── Run the actual search ────────────────────────────────────────────────────
+  const doSearch = () => {
+    const q = query.trim();
+    if (!q) return;
+    if (!indexed) { onToast("Build the index first, then search.", "error"); return; }
     setSearching(true);
+    setLastQuery(q);
+
+    // Small timeout so UI updates before the search loop runs
     setTimeout(() => {
-      setResults([
-        { file: files[0]?.name || "document.pdf", page: 3, snippet: `...the term "${query}" appears in the context of business analysis...` },
-        { file: files[0]?.name || "document.pdf", page: 7, snippet: `...further examples of "${query}" are explored in this section...` },
-        { file: files[1]?.name || "report.pdf", page: 1, snippet: `...introduction references "${query}" as a key concept...` },
-      ]);
+      const matches = [];
+      const filesToSearch = filterFile === "all"
+        ? Object.entries(searchIndex)
+        : Object.entries(searchIndex).filter(([name]) => name === filterFile);
+
+      const flags   = caseSensitive ? "" : "i";
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = wholeWord
+        ? new RegExp(`\\b${escaped}\\b`, flags)
+        : new RegExp(escaped, flags);
+
+      for (const [filename, pages] of filesToSearch) {
+        for (const { page, text } of pages) {
+          if (!pattern.test(text)) continue;
+          // Count occurrences on this page
+          const allMatches = text.match(new RegExp(pattern.source, flags + "g")) || [];
+          matches.push({
+            filename,
+            page,
+            count: allMatches.length,
+            snippet: getSnippet(text, q),
+          });
+        }
+      }
+
+      // Sort by most matches first
+      matches.sort((a, b) => b.count - a.count);
+      setResults(matches);
       setSearching(false);
-    }, 800);
+    }, 50);
+  };
+
+  const totalIndexedPages = Object.values(searchIndex).reduce((s, p) => s + p.length, 0);
+
+  const inputStyle = {
+    background: COLORS.surface2, border: `1px solid ${COLORS.border}`,
+    borderRadius: 10, padding: "11px 16px 11px 44px",
+    color: COLORS.text, fontSize: 15, outline: "none",
+    boxSizing: "border-box", fontFamily: "inherit", width: "100%",
   };
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Full-Text Search</h2>
-      <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-        <div style={{ flex: 1, position: "relative" }}>
-          <Icon d={icons.search} size={16} color={COLORS.textMuted} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && mockSearch()} placeholder="Search across all documents..."
-            style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "12px 16px 12px 44px", color: COLORS.text, fontSize: 15, outline: "none", boxSizing: "border-box" }} />
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 8px", letterSpacing: "-0.3px" }}>
+        Full-Text Search
+      </h2>
+      <p style={{ fontSize: 13, color: COLORS.textMuted, margin: "0 0 20px" }}>
+        Search across every page of every PDF in your workspace simultaneously.
+      </p>
+
+      {/* ── Index builder ── */}
+      <div style={{ background: COLORS.surface2, border: `1px solid ${indexed ? COLORS.success : COLORS.border}`, borderRadius: 14, padding: "16px 20px", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>
+              {indexed
+                ? `✓ Index ready — ${pdfFiles.length} file(s), ${totalIndexedPages} pages`
+                : "Build search index first"}
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 3 }}>
+              {indexed
+                ? "Re-index any time you add new files"
+                : `${pdfFiles.length} PDF file(s) in workspace ready to index`}
+            </div>
+          </div>
+          <Btn
+            onClick={buildIndex}
+            icon={icons.search}
+            disabled={indexing || pdfFiles.length === 0}
+            variant={indexed ? "secondary" : "primary"}
+          >
+            {indexing ? indexMsg || "Indexing…" : indexed ? "Re-index files" : "Build index"}
+          </Btn>
         </div>
-        <Btn onClick={mockSearch} icon={icons.search} disabled={searching || !query.trim()}>
-          {searching ? "Searching..." : "Search"}
+
+        {indexing && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+              <span>{indexMsg}</span><span>{indexProgress}%</span>
+            </div>
+            <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
+              <div style={{ width: `${indexProgress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.3s" }} />
+            </div>
+          </div>
+        )}
+
+        {pdfFiles.length === 0 && (
+          <div style={{ marginTop: 10, fontSize: 12, color: COLORS.gold }}>
+            ⚠ No PDF files in your workspace yet. Upload some PDFs first.
+          </div>
+        )}
+      </div>
+
+      {/* ── Search bar ── */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+        <div style={{ flex: 1, position: "relative" }}>
+          <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <Icon d={icons.search} size={16} color={COLORS.textMuted} />
+          </div>
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && doSearch()}
+            placeholder={indexed ? "Search all documents… (press Enter)" : "Build index first…"}
+            disabled={!indexed}
+            style={inputStyle}
+          />
+        </div>
+        <Btn
+          onClick={doSearch}
+          icon={icons.search}
+          disabled={searching || !query.trim() || !indexed}
+        >
+          {searching ? "Searching…" : "Search"}
         </Btn>
       </div>
 
+      {/* ── Search options ── */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: COLORS.textMuted, userSelect: "none" }}>
+          <input type="checkbox" checked={caseSensitive} onChange={e => setCaseSensitive(e.target.checked)} />
+          Case sensitive
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: COLORS.textMuted, userSelect: "none" }}>
+          <input type="checkbox" checked={wholeWord} onChange={e => setWholeWord(e.target.checked)} />
+          Whole word only
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <span style={{ fontSize: 12, color: COLORS.textMuted }}>Filter by file:</span>
+          <select
+            value={filterFile}
+            onChange={e => setFilterFile(e.target.value)}
+            style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 8px", color: COLORS.text, fontSize: 12, outline: "none", fontFamily: "inherit" }}
+          >
+            <option value="all">All files</option>
+            {pdfFiles.map((f, i) => <option key={i} value={f.name}>{f.name}</option>)}
+          </select>
+        </div>
+        {results.length > 0 && (
+          <button onClick={() => { setResults([]); setLastQuery(""); }} style={{ background: "transparent", border: "none", color: COLORS.textMuted, cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+            ✕ Clear results
+          </button>
+        )}
+      </div>
+
+      {/* ── Results ── */}
       {results.length > 0 && (
         <>
-          <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 14 }}>{results.length} results found for "<b style={{ color: COLORS.text }}>{query}</b>"</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, color: COLORS.textMuted }}>
+              <b style={{ color: COLORS.text }}>{results.length}</b> result{results.length !== 1 ? "s" : ""} for{" "}
+              "<b style={{ color: COLORS.accent }}>{lastQuery}</b>"
+              {filterFile !== "all" && <span> in <b style={{ color: COLORS.text }}>{filterFile}</b></span>}
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.textDim }}>
+              {results.reduce((s, r) => s + r.count, 0)} total match{results.reduce((s,r)=>s+r.count,0)!==1?"es":""}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {results.map((r, i) => (
-              <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "16px 20px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Icon d={icons.file} size={16} color={COLORS.accent} />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{r.file}</span>
+              <div
+                key={i}
+                style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "14px 18px", cursor: "pointer", transition: "border-color 0.12s" }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.accent}
+                onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.border}
+                onClick={() => {
+                  const file = files.find(f => f.name === r.filename);
+                  if (file && onView) onView(file);
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <Icon d={icons.file} size={15} color={COLORS.accent} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.filename}
+                    </span>
                   </div>
-                  <span style={{ fontSize: 11, color: COLORS.textMuted, background: COLORS.surface3, padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>Page {r.page}</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                    {r.count > 1 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, background: COLORS.accentSoft, color: COLORS.accent, border: `1px solid ${COLORS.accent}`, borderRadius: 100, padding: "2px 7px" }}>
+                        {r.count}×
+                      </span>
+                    )}
+                    <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.textMuted, background: COLORS.surface3, padding: "3px 10px", borderRadius: 20 }}>
+                      Page {r.page}
+                    </span>
+                  </div>
                 </div>
-                <p style={{ margin: 0, fontSize: 13, color: COLORS.textMuted, lineHeight: 1.6 }}>{r.snippet}</p>
+                <p
+                  style={{ margin: 0, fontSize: 12, color: COLORS.textMuted, lineHeight: 1.7, fontFamily: "Georgia, serif" }}
+                  dangerouslySetInnerHTML={{ __html: highlightText(r.snippet, lastQuery) }}
+                />
+                <div style={{ marginTop: 8, fontSize: 11, color: COLORS.textDim }}>
+                  Click to open this file in the viewer
+                </div>
               </div>
             ))}
           </div>
         </>
       )}
 
-      {results.length === 0 && !searching && query && (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.textDim }}>
-          <Icon d={icons.search} size={36} color={COLORS.textDim} />
-          <p style={{ margin: "16px 0 0" }}>No results found. Try a different search term.</p>
+      {/* ── No results ── */}
+      {results.length === 0 && !searching && lastQuery && (
+        <div style={{ textAlign: "center", padding: "48px 20px", color: COLORS.textDim }}>
+          <Icon d={icons.search} size={40} color={COLORS.textDim} />
+          <p style={{ margin: "16px 0 6px", fontSize: 15, fontWeight: 600, color: COLORS.text }}>
+            No results found
+          </p>
+          <p style={{ margin: 0, fontSize: 13, maxWidth: 300, lineHeight: 1.6 }}>
+            No pages matched "<b style={{ color: COLORS.text }}>{lastQuery}</b>".
+            Try a different term, uncheck case-sensitive, or re-index your files.
+          </p>
+        </div>
+      )}
+
+      {/* ── Empty state ── */}
+      {!lastQuery && !indexing && (
+        <div style={{ textAlign: "center", padding: "48px 20px", color: COLORS.textDim }}>
+          <Icon d={icons.search} size={40} color={COLORS.textDim} />
+          <p style={{ margin: "16px 0 6px", fontSize: 15, fontWeight: 600, color: COLORS.text }}>
+            {indexed ? "Ready to search" : "Build the index to get started"}
+          </p>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.textMuted, maxWidth: 320, lineHeight: 1.6 }}>
+            {indexed
+              ? `${totalIndexedPages} pages indexed across ${pdfFiles.length} file(s). Type a search term above and press Enter.`
+              : "Click Build index above to scan all your PDFs. This only takes a few seconds and you only need to do it once per session."}
+          </p>
         </div>
       )}
     </div>
