@@ -3165,8 +3165,27 @@ const SearchSection = ({ files, onToast, onView }) => {
           for (let p = 1; p <= pdfDoc.numPages; p++) {
             const page    = await pdfDoc.getPage(p);
             const content = await page.getTextContent();
-            const text    = content.items.map(item => item.str).join(" ").trim();
-            if (text) pages.push({ page: p, text });
+
+            // Build lines by grouping text items that share the same Y position
+            // PDF.js gives us individual text runs — group by vertical position
+            const lineMap = new Map();
+            content.items.forEach(item => {
+              if (!item.str?.trim()) return;
+              // Round Y to nearest 2pts to group items on the same visual line
+              const y = Math.round(item.transform[5] / 2) * 2;
+              if (!lineMap.has(y)) lineMap.set(y, []);
+              lineMap.get(y).push(item.str);
+            });
+
+            // Sort by Y descending (PDF Y=0 is bottom, so higher Y = higher on page)
+            const sortedYs = Array.from(lineMap.keys()).sort((a, b) => b - a);
+            const lines    = sortedYs
+              .map(y => lineMap.get(y).join(" ").trim())
+              .filter(Boolean);
+
+            // Full text for quick matching
+            const text = lines.join("\n").trim();
+            if (text) pages.push({ page: p, text, lines });
           }
 
           newIndex[file.name] = pages;
@@ -3209,15 +3228,43 @@ const SearchSection = ({ files, onToast, onView }) => {
     } catch { return text; }
   };
 
-  // ── Extract snippet around the match ────────────────────────────────────────
-  const getSnippet = (text, q, maxLen = 200) => {
-    const lower   = caseSensitive ? text : text.toLowerCase();
-    const qLower  = caseSensitive ? q : q.toLowerCase();
-    const idx     = lower.indexOf(qLower);
-    if (idx === -1) return text.substring(0, maxLen) + "…";
-    const start   = Math.max(0, idx - 80);
-    const end     = Math.min(text.length, idx + qLower.length + 120);
-    return (start > 0 ? "…" : "") + text.substring(start, end) + (end < text.length ? "…" : "");
+  // ── Extract snippet and line number around the match ────────────────────────
+  const getSnippetAndLine = (text, lines, q) => {
+    const flags   = caseSensitive ? "" : "i";
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = wholeWord
+      ? new RegExp(`\\b${escaped}\\b`, flags)
+      : new RegExp(escaped, flags);
+
+    // Find which line the first match is on
+    let lineNum = null;
+    let lineSnippet = null;
+    if (lines) {
+      for (let i = 0; i < lines.length; i++) {
+        if (pattern.test(lines[i])) {
+          lineNum = i + 1; // 1-based line number
+          // Build snippet: show 1 line before and after for context
+          const contextLines = lines.slice(
+            Math.max(0, i - 1),
+            Math.min(lines.length, i + 3)
+          );
+          lineSnippet = contextLines.join(" ").trim();
+          break;
+        }
+      }
+    }
+
+    // Fall back to character-based snippet if no line found
+    if (!lineSnippet) {
+      const lower = caseSensitive ? text : text.toLowerCase();
+      const qLow  = caseSensitive ? q : q.toLowerCase();
+      const idx   = lower.indexOf(qLow);
+      const start = Math.max(0, idx - 80);
+      const end   = Math.min(text.length, idx + qLow.length + 120);
+      lineSnippet = (start > 0 ? "…" : "") + text.substring(start, end) + (end < text.length ? "…" : "");
+    }
+
+    return { snippet: lineSnippet, lineNum };
   };
 
   // ── Run the actual search ────────────────────────────────────────────────────
@@ -3242,15 +3289,16 @@ const SearchSection = ({ files, onToast, onView }) => {
         : new RegExp(escaped, flags);
 
       for (const [filename, pages] of filesToSearch) {
-        for (const { page, text } of pages) {
+        for (const { page, text, lines } of pages) {
           if (!pattern.test(text)) continue;
-          // Count occurrences on this page
           const allMatches = text.match(new RegExp(pattern.source, flags + "g")) || [];
+          const { snippet, lineNum } = getSnippetAndLine(text, lines, q);
           matches.push({
             filename,
             page,
+            lineNum,
             count: allMatches.length,
-            snippet: getSnippet(text, q),
+            snippet,
           });
         }
       }
@@ -3417,14 +3465,25 @@ const SearchSection = ({ files, onToast, onView }) => {
                     <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.textMuted, background: COLORS.surface3, padding: "3px 10px", borderRadius: 20 }}>
                       Page {r.page}
                     </span>
+                    {r.lineNum && (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.teal, background: COLORS.tealSoft, padding: "3px 10px", borderRadius: 20, border: `1px solid ${COLORS.teal}30` }}>
+                        Line {r.lineNum}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <p
                   style={{ margin: 0, fontSize: 12, color: COLORS.textMuted, lineHeight: 1.7, fontFamily: "Georgia, serif" }}
                   dangerouslySetInnerHTML={{ __html: highlightText(r.snippet, lastQuery) }}
                 />
-                <div style={{ marginTop: 8, fontSize: 11, color: COLORS.textDim }}>
-                  Click to open this file in the viewer
+                <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontSize: 11, color: COLORS.textDim }}>
+                    Click to open in viewer
+                  </div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim }}>
+                    {r.lineNum ? `Page ${r.page}, Line ${r.lineNum}` : `Page ${r.page}`}
+                    {r.count > 1 ? ` · ${r.count} matches on this page` : ""}
+                  </div>
                 </div>
               </div>
             ))}
