@@ -137,6 +137,11 @@ const ICO = {
   print:     ["M6 9V2h12v7","M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2","M6 14h12v8H6z"],
   highlight: "M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
   note:      "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
+  underline: "M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3 M4 21h16",
+  strike:    ["M17.3 4.9c-2.3-.6-4.4-1-6.2-.9-2.7 0-5.3.7-5.3 3.6 0 1.5 1.1 2.5 2.3 3.2M21 12H3", "M11.6 19.1c2.3.6 4.4 1 6.2.9 2.7 0 5.3-.7 5.3-3.6 0-1.5-1.1-2.5-2.3-3.2"],
+  pen:       "M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z M2 2l7.586 7.586 M11 11l-4 4",
+  eraser:    ["M20 20H7L3 16l10-10 7 7-2.5 2.5", "M6.0001 10.0001l4 4"],
+  save:      "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z M17 21v-8H7v8 M7 3v5h8",
   search:    "M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z",
   rotate:    "M1 4v6h6 M23 20v-6h-6 M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15",
   plus:      "M12 5v14 M5 12h14",
@@ -213,6 +218,20 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [activeTab, setActiveTab]     = useState("thumbs");
+
+  // ── Annotation state ─────────────────────────────────────────────────────────
+  const [annotations, setAnnotations]     = useState([]);    // all annotations across pages
+  const [annotColor, setAnnotColor]       = useState("#FFD700");
+  const [annotDrawing, setAnnotDrawing]   = useState(false);
+  const [annotStart, setAnnotStart]       = useState(null);  // {x,y} for rect tools
+  const [annotCurrent, setAnnotCurrent]   = useState(null);  // live rect while dragging
+  const [pendingNote, setPendingNote]     = useState(null);  // {x,y} where note will drop
+  const [noteInputText, setNoteInputText] = useState("");
+  const [savingAnnots, setSavingAnnots]   = useState(false);
+  const [annotSaved, setAnnotSaved]       = useState(false);
+  const annotCanvasRef = useRef();        // overlay canvas on the page
+  const annotLastPos   = useRef(null);
+  const annotPathRef   = useRef([]);      // current freehand path points
 
   // ── Signature state ──────────────────────────────────────────────────────────
   const [showSignPanel, setShowSignPanel] = useState(false);
@@ -320,6 +339,283 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
     }
     setSearchResults(results);
   }, [pdfDoc, searchQuery, numPages]);
+
+  // ── Annotation canvas sync — resize overlay to match rendered page ────────────
+  useEffect(() => {
+    const canvas = annotCanvasRef.current;
+    if (!canvas || !pageWrapRef.current) return;
+    const pageDiv = pageWrapRef.current.querySelector("canvas");
+    if (!pageDiv) return;
+    canvas.width  = pageDiv.width;
+    canvas.height = pageDiv.height;
+    canvas.style.width  = pageDiv.style.width  || pageDiv.width  + "px";
+    canvas.style.height = pageDiv.style.height || pageDiv.height + "px";
+    redrawAnnotCanvas();
+  }, [currentPage, scale, pdfDoc]);
+
+  // ── Redraw all annotations for current page onto the overlay canvas ──────────
+  const redrawAnnotCanvas = () => {
+    const canvas = annotCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const pageAnnots = annotations.filter(a => a.page === currentPage);
+    pageAnnots.forEach(a => drawAnnot(ctx, a));
+  };
+
+  const drawAnnot = (ctx, a) => {
+    ctx.save();
+    if (a.type === "highlight") {
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = a.color;
+      ctx.fillRect(a.x, a.y, a.w, a.h);
+    } else if (a.type === "underline") {
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y + a.h);
+      ctx.lineTo(a.x + a.w, a.y + a.h);
+      ctx.stroke();
+    } else if (a.type === "strikethrough") {
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y + a.h / 2);
+      ctx.lineTo(a.x + a.w, a.y + a.h / 2);
+      ctx.stroke();
+    } else if (a.type === "freehand") {
+      if (!a.points || a.points.length < 2) return;
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(a.points[0].x, a.points[0].y);
+      a.points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.stroke();
+    } else if (a.type === "note") {
+      // Draw sticky note icon
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = a.color;
+      ctx.fillRect(a.x, a.y, 24, 24);
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("📝", a.x + 2, a.y + 17);
+    }
+    ctx.restore();
+  };
+
+  // Redraw whenever annotations or page changes
+  useEffect(() => {
+    redrawAnnotCanvas();
+  }, [annotations, currentPage]);
+
+  // ── Get mouse/touch position relative to annotation canvas ──────────────────
+  const getAnnotPos = (e) => {
+    const canvas = annotCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / rect.width;
+    const sy = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: (clientX - rect.left) * sx,
+      y: (clientY - rect.top)  * sy,
+    };
+  };
+
+  // ── Annotation canvas mouse handlers ────────────────────────────────────────
+  const onAnnotMouseDown = (e) => {
+    if (!["highlight", "underline", "strikethrough", "freehand", "note"].includes(activeTool)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pos = getAnnotPos(e);
+
+    if (activeTool === "note") {
+      setPendingNote(pos);
+      setNoteInputText("");
+      return;
+    }
+    if (activeTool === "freehand") {
+      setAnnotDrawing(true);
+      annotPathRef.current = [pos];
+      annotLastPos.current = pos;
+      return;
+    }
+    setAnnotDrawing(true);
+    setAnnotStart(pos);
+    setAnnotCurrent(pos);
+  };
+
+  const onAnnotMouseMove = (e) => {
+    if (!annotDrawing) return;
+    e.preventDefault();
+    const pos = getAnnotPos(e);
+
+    if (activeTool === "freehand") {
+      const ctx = annotCanvasRef.current?.getContext("2d");
+      if (ctx && annotLastPos.current) {
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = annotColor;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        ctx.moveTo(annotLastPos.current.x, annotLastPos.current.y);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+      }
+      annotPathRef.current.push(pos);
+      annotLastPos.current = pos;
+      return;
+    }
+    if (annotStart) {
+      setAnnotCurrent(pos);
+      // Draw live preview
+      const canvas = annotCanvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      redrawAnnotCanvas();
+      const x = Math.min(annotStart.x, pos.x);
+      const y = Math.min(annotStart.y, pos.y);
+      const w = Math.abs(pos.x - annotStart.x);
+      const h = Math.abs(pos.y - annotStart.y) || 18;
+      drawAnnot(ctx, { type: activeTool, x, y, w, h, color: annotColor, page: currentPage });
+    }
+  };
+
+  const onAnnotMouseUp = (e) => {
+    if (!annotDrawing) return;
+    e.preventDefault();
+    const pos = getAnnotPos(e);
+
+    if (activeTool === "freehand") {
+      setAnnotDrawing(false);
+      if (annotPathRef.current.length > 1) {
+        const newAnnot = { id: Date.now(), type: "freehand", points: [...annotPathRef.current], color: annotColor, page: currentPage };
+        setAnnotations(prev => [...prev, newAnnot]);
+      }
+      annotPathRef.current = [];
+      return;
+    }
+    if (annotStart) {
+      const x = Math.min(annotStart.x, pos.x);
+      const y = Math.min(annotStart.y, pos.y);
+      const w = Math.abs(pos.x - annotStart.x) || 80;
+      const h = Math.abs(pos.y - annotStart.y) || 18;
+      if (w > 4) {
+        const newAnnot = { id: Date.now(), type: activeTool, x, y, w, h, color: annotColor, page: currentPage };
+        setAnnotations(prev => [...prev, newAnnot]);
+      }
+    }
+    setAnnotDrawing(false);
+    setAnnotStart(null);
+    setAnnotCurrent(null);
+  };
+
+  // ── Save all annotations permanently into the PDF ───────────────────────────
+  const saveAnnotations = async () => {
+    if (!file?.raw || annotations.length === 0) return;
+    setSavingAnnots(true);
+    setAnnotSaved(false);
+    try {
+      const { PDFDocument, rgb } = await import("pdf-lib");
+      const buffer  = await file.raw.arrayBuffer();
+      const pdfDoc  = await PDFDocument.load(buffer, { ignoreEncryption: true });
+
+      for (const annot of annotations) {
+        const pageIdx = Math.min(Math.max((annot.page || 1) - 1, 0), pdfDoc.getPageCount() - 1);
+        const page    = pdfDoc.getPage(pageIdx);
+        const { width: pageW, height: pageH } = page.getSize();
+
+        // Convert canvas coords → PDF coords
+        const canvas = annotCanvasRef.current;
+        const cw = canvas?.width  || 600;
+        const ch = canvas?.height || 800;
+        const sx = pageW / cw;
+        const sy = pageH / ch;
+
+        // Parse hex color to pdf-lib rgb
+        const hexToRgb = (hex) => {
+          const r = parseInt(hex.slice(1, 3), 16) / 255;
+          const g = parseInt(hex.slice(3, 5), 16) / 255;
+          const b = parseInt(hex.slice(5, 7), 16) / 255;
+          return rgb(r, g, b);
+        };
+        const color = hexToRgb(annot.color || "#FFD700");
+
+        if (annot.type === "highlight") {
+          const pdfX = annot.x * sx;
+          const pdfY = pageH - (annot.y + annot.h) * sy;
+          page.drawRectangle({ x: pdfX, y: pdfY, width: annot.w * sx, height: annot.h * sy, color, opacity: 0.35 });
+
+        } else if (annot.type === "underline") {
+          const pdfX  = annot.x * sx;
+          const pdfY  = pageH - (annot.y + annot.h) * sy;
+          page.drawLine({ start: { x: pdfX, y: pdfY }, end: { x: (annot.x + annot.w) * sx, y: pdfY }, thickness: 1.5, color, opacity: 0.9 });
+
+        } else if (annot.type === "strikethrough") {
+          const pdfX  = annot.x * sx;
+          const midY  = pageH - (annot.y + annot.h / 2) * sy;
+          page.drawLine({ start: { x: pdfX, y: midY }, end: { x: (annot.x + annot.w) * sx, y: midY }, thickness: 1.5, color, opacity: 0.9 });
+
+        } else if (annot.type === "freehand" && annot.points?.length > 1) {
+          for (let i = 0; i < annot.points.length - 1; i++) {
+            const p1 = annot.points[i];
+            const p2 = annot.points[i + 1];
+            page.drawLine({
+              start: { x: p1.x * sx, y: pageH - p1.y * sy },
+              end:   { x: p2.x * sx, y: pageH - p2.y * sy },
+              thickness: 1.5, color, opacity: 0.85,
+            });
+          }
+
+        } else if (annot.type === "note") {
+          const { StandardFonts } = await import("pdf-lib");
+          const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          const pdfX = annot.x * sx;
+          const pdfY = pageH - annot.y * sy - 30;
+          // Yellow box
+          page.drawRectangle({ x: pdfX, y: pdfY, width: 120, height: 40, color: rgb(1, 0.95, 0.5), opacity: 0.85 });
+          // Note text
+          const noteWords = (annot.text || "Note").substring(0, 60);
+          page.drawText(noteWords, { x: pdfX + 4, y: pdfY + 14, font, size: 8, color: rgb(0.1, 0.1, 0.1) });
+        }
+      }
+
+      const annotatedBytes = await pdfDoc.save();
+      const fileName = file.name.replace(/\.pdf$/i, "") + "_annotated.pdf";
+      const blob     = new Blob([annotatedBytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Add to workspace and reload viewer
+      if (onAddFiles) onAddFiles([rawFile]);
+      const reloaded = await pdfjsLib.getDocument({ data: await rawFile.arrayBuffer() }).promise;
+      setPdfDoc(reloaded);
+      setNumPages(reloaded.numPages);
+      file.name = fileName;
+      file.raw  = rawFile;
+
+      setAnnotations([]);
+      setSavingAnnots(false);
+      setAnnotSaved(true);
+      setTimeout(() => setAnnotSaved(false), 5000);
+    } catch (err) {
+      console.error(err);
+      setSavingAnnots(false);
+      alert(`Failed to save annotations: ${err.message}`);
+    }
+  };
 
   const downloadPDF = () => {
     if (!file?.raw) return;
@@ -634,12 +930,40 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
 
         {/* Tools */}
-        <button style={S.btn(activeTool === "highlight")} onClick={() => setActiveTool(t => t === "highlight" ? "none" : "highlight")}>
-          <Ic path={ICO.highlight} size={13} /> Highlight
+        <button style={S.btn(activeTool === "highlight")} onClick={() => setActiveTool(t => t === "highlight" ? "none" : "highlight")} title="Highlight — drag to select area">
+          🟡 Highlight
         </button>
-        <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }}>
+        <button style={S.btn(activeTool === "underline")} onClick={() => setActiveTool(t => t === "underline" ? "none" : "underline")} title="Underline — drag to select area">
+          <Ic path={ICO.underline} size={13} /> Underline
+        </button>
+        <button style={S.btn(activeTool === "strikethrough")} onClick={() => setActiveTool(t => t === "strikethrough" ? "none" : "strikethrough")} title="Strikethrough — drag to select area">
+          <Ic path={ICO.strike} size={13} /> Strike
+        </button>
+        <button style={S.btn(activeTool === "freehand")} onClick={() => setActiveTool(t => t === "freehand" ? "none" : "freehand")} title="Freehand pen — draw freely">
+          <Ic path={ICO.pen} size={13} /> Draw
+        </button>
+        <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }} title="Sticky note — click to place">
           <Ic path={ICO.note} size={13} /> Note
         </button>
+        {/* Annotation color picker */}
+        {["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && (
+          <div style={{ display: "flex", gap: 5, alignItems: "center", padding: "0 4px", borderLeft: "1px solid #2A2F4A", paddingLeft: 10 }}>
+            {["#FFD700","#FF6B6B","#4ECDC4","#A78BFA","#34D399","#FB923C"].map(c => (
+              <div key={c} onClick={() => setAnnotColor(c)} style={{ width: 18, height: 18, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${annotColor === c ? "#fff" : "transparent"}`, transition: "border 0.1s", flexShrink: 0 }} />
+            ))}
+          </div>
+        )}
+        {annotations.filter(a => a.page === currentPage).length > 0 && (
+          <>
+            <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+            <button style={{ ...S.btn(false), background: savingAnnots ? "#22263A" : "#E84D4D", color: "#fff", border: "none" }} onClick={saveAnnotations} disabled={savingAnnots} title="Save annotations permanently into the PDF">
+              <Ic path={ICO.save} size={13} /> {savingAnnots ? "Saving…" : `Save (${annotations.filter(a => a.page === currentPage).length})`}
+            </button>
+            <button style={{ ...S.btn(false), fontSize: 11 }} onClick={() => setAnnotations([])} title="Clear all annotations">
+              ✕ Clear all
+            </button>
+          </>
+        )}
         <button style={{ ...S.btn(showSignPanel), background: showSignPanel ? "#2ECC71" : S.btn(false).background }} onClick={() => setShowSignPanel(v => !v)}>
           ✍ Sign
         </button>
@@ -897,6 +1221,100 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
             >
               <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale} />
 
+              {/* ── Annotation overlay canvas ── */}
+              {["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && (
+                <canvas
+                  ref={annotCanvasRef}
+                  onMouseDown={onAnnotMouseDown}
+                  onMouseMove={onAnnotMouseMove}
+                  onMouseUp={onAnnotMouseUp}
+                  onMouseLeave={onAnnotMouseUp}
+                  onTouchStart={onAnnotMouseDown}
+                  onTouchMove={onAnnotMouseMove}
+                  onTouchEnd={onAnnotMouseUp}
+                  style={{
+                    position: "absolute", inset: 0,
+                    cursor: activeTool === "freehand" ? "crosshair"
+                          : activeTool === "note"     ? "cell"
+                          : "text",
+                    zIndex: 10,
+                    touchAction: "none",
+                  }}
+                />
+              )}
+
+              {/* ── Read-only annotation overlay when no tool selected ── */}
+              {!["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && annotations.some(a => a.page === currentPage) && (
+                <canvas
+                  ref={annotCanvasRef}
+                  style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 10 }}
+                />
+              )}
+
+              {/* ── Sticky note input popup ── */}
+              {pendingNote && (
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    position: "absolute",
+                    left: Math.min(pendingNote.x, (annotCanvasRef.current?.width || 600) - 220),
+                    top:  pendingNote.y,
+                    zIndex: 200,
+                    background: "#FFF9C4",
+                    border: "2px solid #FFD700",
+                    borderRadius: 10,
+                    padding: 12,
+                    boxShadow: "0 6px 24px rgba(0,0,0,0.35)",
+                    width: 220,
+                  }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+                    📝 Add sticky note
+                  </div>
+                  <textarea
+                    autoFocus
+                    value={noteInputText}
+                    onChange={e => setNoteInputText(e.target.value)}
+                    rows={3}
+                    placeholder="Type your note…"
+                    style={{ width: "100%", border: "1px solid #FFD700", borderRadius: 6, padding: "6px 8px", fontSize: 12, fontFamily: "inherit", resize: "none", outline: "none", background: "#FFFDE7", boxSizing: "border-box" }}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && e.ctrlKey) {
+                        if (noteInputText.trim()) {
+                          setAnnotations(prev => [...prev, { id: Date.now(), type: "note", x: pendingNote.x, y: pendingNote.y, color: annotColor, text: noteInputText.trim(), page: currentPage }]);
+                        }
+                        setPendingNote(null);
+                        setNoteInputText("");
+                      }
+                      if (e.key === "Escape") { setPendingNote(null); setNoteInputText(""); }
+                    }}
+                  />
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    <button
+                      onClick={() => {
+                        if (noteInputText.trim()) {
+                          setAnnotations(prev => [...prev, { id: Date.now(), type: "note", x: pendingNote.x, y: pendingNote.y, color: annotColor, text: noteInputText.trim(), page: currentPage }]);
+                        }
+                        setPendingNote(null);
+                        setNoteInputText("");
+                      }}
+                      style={{ flex: 1, background: "#FFD700", border: "none", borderRadius: 6, padding: "5px 0", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>
+                      Add note
+                    </button>
+                    <button onClick={() => { setPendingNote(null); setNoteInputText(""); }} style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+                      Cancel
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#999", marginTop: 6 }}>Ctrl+Enter to save · Esc to cancel</div>
+                </div>
+              )}
+
+              {/* ── Annotation saved success banner ── */}
+              {annotSaved && (
+                <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 300, background: "rgba(46,204,113,0.95)", padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, color: "#0D0E14", boxShadow: "0 4px 16px rgba(0,0,0,0.3)", whiteSpace: "nowrap" }}>
+                  ✓ Annotations saved into PDF!
+                </div>
+              )}
+
               {/* Draggable signature preview */}
               {sigPreview && sigImageUrl && (
                 <div
@@ -1042,6 +1460,32 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
                   <span style={{ color: "#E8E9F0", fontWeight: 500, maxWidth: 110, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {annotations.length > 0 && (
+            <div style={S.rightSec}>
+              <div style={S.rightTitle}>Annotations</div>
+              <div style={{ fontSize: 11, color: "#7B8099", marginBottom: 8 }}>
+                {annotations.length} total · {annotations.filter(a => a.page === currentPage).length} on this page
+              </div>
+              {["highlight","underline","strikethrough","freehand","note"].map(type => {
+                const count = annotations.filter(a => a.type === type).length;
+                if (!count) return null;
+                const labels = { highlight: "🟡 Highlights", underline: "Underlines", strikethrough: "Strikethroughs", freehand: "✏ Drawings", note: "📝 Notes" };
+                return (
+                  <div key={type} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 0", borderBottom: "1px solid #2A2F4A" }}>
+                    <span style={{ color: "#7B8099" }}>{labels[type]}</span>
+                    <span style={{ color: "#E8E9F0", fontWeight: 600 }}>{count}</span>
+                  </div>
+                );
+              })}
+              <button onClick={saveAnnotations} disabled={savingAnnots} style={{ ...S.btn(true), marginTop: 10, width: "100%", justifyContent: "center", background: "#E84D4D", color: "#fff", border: "none" }}>
+                <Ic path={ICO.save} size={13} color="#fff" /> {savingAnnots ? "Saving…" : "Save to PDF"}
+              </button>
+              <button onClick={() => setAnnotations([])} style={{ ...S.btn(false), marginTop: 6, width: "100%", justifyContent: "center", fontSize: 11 }}>
+                ✕ Clear all
+              </button>
             </div>
           )}
 
