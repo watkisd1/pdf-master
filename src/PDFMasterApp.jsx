@@ -2397,101 +2397,337 @@ const ExtractSection = ({ files, onToast }) => {
 };
 
 // ─── Section: Security ────────────────────────────────────────────────────────
-const SecuritySection = ({ files, onToast }) => {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [password, setPassword] = useState("");
-  const [confirmPwd, setConfirmPwd] = useState("");
-  const [permissions, setPermissions] = useState({ print: true, copy: true, edit: false, annotate: true });
-  const [encLevel, setEncLevel] = useState("256");
-  const [redactText, setRedactText] = useState("");
-  const [showPwd, setShowPwd] = useState(false);
+const SecuritySection = ({ files, onToast, onAddFiles }) => {
+  const [selectedFile, setSelectedFile]   = useState(null);
+  const [userPwd, setUserPwd]             = useState("");
+  const [ownerPwd, setOwnerPwd]           = useState("");
+  const [confirmPwd, setConfirmPwd]       = useState("");
+  const [showUserPwd, setShowUserPwd]     = useState(false);
+  const [showOwnerPwd, setShowOwnerPwd]   = useState(false);
+  const [encLevel, setEncLevel]           = useState("128");
+  const [protecting, setProtecting]       = useState(false);
+  const [unlocking, setUnlocking]         = useState(false);
+  const [unlockPwd, setUnlockPwd]         = useState("");
+  const [unlockFile, setUnlockFile]       = useState(null);
+  const [redactText, setRedactText]       = useState("");
+  const [redacting, setRedacting]         = useState(false);
+  const [tab, setTab]                     = useState("protect");
+  const [permissions, setPermissions]     = useState({
+    printing:     true,
+    modifying:    false,
+    copying:      true,
+    annotating:   true,
+    fillingForms: true,
+  });
 
-  const applyProtection = () => {
-    if (!selectedFile) { onToast("Select a file first.", "error"); return; }
-    if (!password) { onToast("Enter a password.", "error"); return; }
-    if (password !== confirmPwd) { onToast("Passwords do not match.", "error"); return; }
-    onToast(`"${selectedFile.name}" protected with ${encLevel}-bit encryption!`, "success");
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "9px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
   };
 
-  const PermToggle = ({ key: k, label }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-      <span style={{ fontSize: 13, color: COLORS.text }}>{label}</span>
-      <div onClick={() => setPermissions(p => ({ ...p, [k]: !p[k] }))} style={{ width: 38, height: 21, background: permissions[k] ? COLORS.success : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${permissions[k] ? COLORS.success : COLORS.border}` }}>
-        <div style={{ width: 15, height: 15, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: permissions[k] ? 19 : 2, transition: "left 0.2s" }} />
+  const Toggle = ({ label, desc, k }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+      <div>
+        <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 500 }}>{label}</div>
+        {desc && <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 2 }}>{desc}</div>}
+      </div>
+      <div
+        onClick={() => setPermissions(p => ({ ...p, [k]: !p[k] }))}
+        style={{ width: 40, height: 22, background: permissions[k] ? COLORS.success : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${permissions[k] ? COLORS.success : COLORS.border}`, flexShrink: 0, marginLeft: 16 }}>
+        <div style={{ width: 16, height: 16, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: permissions[k] ? 20 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
       </div>
     </div>
   );
 
+  const pwdStrength = (pwd) => {
+    if (!pwd) return { score: 0, label: "", color: COLORS.border };
+    let score = 0;
+    if (pwd.length >= 8)  score++;
+    if (pwd.length >= 12) score++;
+    if (/[A-Z]/.test(pwd)) score++;
+    if (/[0-9]/.test(pwd)) score++;
+    if (/[^A-Za-z0-9]/.test(pwd)) score++;
+    if (score <= 1) return { score, label: "Weak",   color: COLORS.error };
+    if (score <= 3) return { score, label: "Fair",   color: COLORS.gold };
+    return                { score, label: "Strong",  color: COLORS.success };
+  };
+  const strength = pwdStrength(userPwd);
+
+  const applyProtection = async () => {
+    if (!selectedFile)          { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw)      { onToast("Re-upload the file.", "error"); return; }
+    if (!userPwd)               { onToast("Enter a user password.", "error"); return; }
+    if (userPwd !== confirmPwd) { onToast("Passwords do not match.", "error"); return; }
+    if (userPwd.length < 4)     { onToast("Password must be at least 4 characters.", "error"); return; }
+    setProtecting(true);
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const buffer = await selectedFile.raw.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const permFlags = {
+        printing:             permissions.printing     ? "highResolution" : "none",
+        modifying:            permissions.modifying,
+        copying:              permissions.copying,
+        annotating:           permissions.annotating,
+        fillingForms:         permissions.fillingForms,
+        contentAccessibility: true,
+        documentAssembly:     false,
+      };
+      const encryptedBytes = await pdfDoc.save({
+        userPassword:  userPwd,
+        ownerPassword: ownerPwd || userPwd + "_owner",
+        permissions:   permFlags,
+      });
+      const fileName = selectedFile.name.replace(/\.pdf$/i, "") + "_protected.pdf";
+      const blob     = new Blob([encryptedBytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+      if (onAddFiles) onAddFiles([rawFile]);
+      onToast(`\u2713 "${fileName}" protected successfully!`, "success");
+      setUserPwd(""); setConfirmPwd(""); setOwnerPwd("");
+      setProtecting(false);
+    } catch (err) {
+      console.error(err);
+      setProtecting(false);
+      onToast(`Protection failed: ${err.message}`, "error");
+    }
+  };
+
+  const removeProtection = async () => {
+    if (!unlockFile)     { onToast("Select a file.", "error"); return; }
+    if (!unlockFile.raw) { onToast("Re-upload the file.", "error"); return; }
+    if (!unlockPwd)      { onToast("Enter the password.", "error"); return; }
+    setUnlocking(true);
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const buffer = await unlockFile.raw.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(buffer, { password: unlockPwd });
+      const bytes  = await pdfDoc.save();
+      const fileName = unlockFile.name.replace(/(_protected)?\.pdf$/i, "") + "_unlocked.pdf";
+      const blob   = new Blob([bytes], { type: "application/pdf" });
+      const rawFile = new File([blob], fileName, { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+      if (onAddFiles) onAddFiles([rawFile]);
+      onToast(`\u2713 Password removed \u2014 "${fileName}" is unlocked!`, "success");
+      setUnlockPwd(""); setUnlocking(false);
+    } catch (err) {
+      console.error(err);
+      setUnlocking(false);
+      const msg = err.message?.toLowerCase();
+      if (msg?.includes("password") || msg?.includes("decrypt")) {
+        onToast("Wrong password \u2014 could not unlock this PDF.", "error");
+      } else {
+        onToast(`Unlock failed: ${err.message}`, "error");
+      }
+    }
+  };
+
+  const applyRedaction = async () => {
+    if (!selectedFile)      { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw)  { onToast("Re-upload the file.", "error"); return; }
+    if (!redactText.trim()) { onToast("Enter text to redact.", "error"); return; }
+    setRedacting(true);
+    try {
+      const { PDFDocument, rgb } = await import("pdf-lib");
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = (window.location.origin || "") + "/pdf.worker.min.js";
+      const buffer   = await selectedFile.raw.arrayBuffer();
+      const pdfDoc   = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const pdfJsDoc = await pdfjsLib.getDocument({ data: buffer.slice(0) }).promise;
+      const total    = pdfDoc.getPageCount();
+      let   count    = 0;
+      for (let p = 0; p < total; p++) {
+        const page   = pdfDoc.getPage(p);
+        const { height: pageH } = page.getSize();
+        const jsPage = await pdfJsDoc.getPage(p + 1);
+        const content = await jsPage.getTextContent();
+        content.items.forEach(item => {
+          if (!item.str?.toLowerCase().includes(redactText.toLowerCase())) return;
+          const tx = item.transform;
+          const x  = tx[4];
+          const y  = pageH - tx[5] - (item.height || 10);
+          const w  = item.width  || 60;
+          const h  = (item.height || 10) + 2;
+          page.drawRectangle({ x: x - 2, y, width: w + 4, height: h + 2, color: rgb(0, 0, 0) });
+          count++;
+        });
+      }
+      if (count === 0) { onToast(`"${redactText}" not found in this document.`, "error"); setRedacting(false); return; }
+      const bytes    = await pdfDoc.save();
+      const fileName = selectedFile.name.replace(/\.pdf$/i, "") + "_redacted.pdf";
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+      if (onAddFiles) onAddFiles([rawFile]);
+      onToast(`\u2713 Redacted ${count} instance(s) of "${redactText}"!`, "success");
+      setRedactText(""); setRedacting(false);
+    } catch (err) {
+      console.error(err);
+      setRedacting(false);
+      onToast(`Redaction failed: ${err.message}`, "error");
+    }
+  };
+
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Security & Permissions</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-        {/* Password Protection */}
-        <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: COLORS.text, display: "flex", alignItems: "center", gap: 8 }}>
-            <Icon d={icons.lock} size={16} color={COLORS.gold} /> Password Protection
-          </h3>
+      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        {[["protect","\uD83D\uDD12 Protect"],["unlock","\uD83D\uDD13 Unlock"],["redact","\u2B1B Redact"]].map(([id, lbl]) => (
+          <button key={id} onClick={() => setTab(id)} style={{ background: tab === id ? COLORS.gold : "transparent", color: tab === id ? "#0D0E14" : COLORS.textMuted, border: `1px solid ${tab === id ? COLORS.gold : COLORS.border}`, borderRadius: 9, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.15s", fontFamily: "inherit" }}>{lbl}</button>
+        ))}
+      </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>File</label>
-            <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none" }}>
-              <option value="">Select file...</option>
-              {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
-            </select>
-          </div>
-
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Password</label>
-            <div style={{ position: "relative" }}>
-              <input type={showPwd ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password..."
-                style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 38px 9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-              <button onClick={() => setShowPwd(v => !v)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer" }}>
-                <Icon d={icons.eye} size={15} />
-              </button>
+      {tab === "protect" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: COLORS.text, display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon d={icons.lock} size={16} color={COLORS.gold} /> Password Protection
+            </h3>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>File to protect</label>
+              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={inputStyle}>
+                <option value="">Select file\u2026</option>
+                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              </select>
             </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>User password</label>
+              <div style={{ position: "relative" }}>
+                <input type={showUserPwd ? "text" : "password"} value={userPwd} onChange={e => setUserPwd(e.target.value)} placeholder="Enter password\u2026" style={{ ...inputStyle, paddingRight: 38 }} />
+                <button onClick={() => setShowUserPwd(v => !v)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer" }}><Icon d={icons.eye} size={15} /></button>
+              </div>
+              {userPwd && (
+                <div style={{ marginTop: 7 }}>
+                  <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                    {[1,2,3,4,5].map(i => <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= strength.score ? strength.color : COLORS.border }} />)}
+                  </div>
+                  <div style={{ fontSize: 11, color: strength.color, fontWeight: 600 }}>{strength.label}</div>
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Confirm password</label>
+              <input type="password" value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)} placeholder="Confirm password\u2026" style={{ ...inputStyle, borderColor: confirmPwd && confirmPwd !== userPwd ? COLORS.error : COLORS.border }} />
+              {confirmPwd && confirmPwd !== userPwd && <div style={{ fontSize: 11, color: COLORS.error, marginTop: 4 }}>\u26a0 Passwords do not match</div>}
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Owner password <span style={{ color: COLORS.textDim, fontWeight: 400 }}>(optional)</span></label>
+              <div style={{ position: "relative" }}>
+                <input type={showOwnerPwd ? "text" : "password"} value={ownerPwd} onChange={e => setOwnerPwd(e.target.value)} placeholder="Leave blank to auto-generate\u2026" style={{ ...inputStyle, paddingRight: 38 }} />
+                <button onClick={() => setShowOwnerPwd(v => !v)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer" }}><Icon d={icons.eye} size={15} /></button>
+              </div>
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>Encryption level</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["128","RC4 128-bit","Widely supported"],["256","AES 256-bit","Strongest, PDF 1.7+"]].map(([v, l, d]) => (
+                  <div key={v} onClick={() => setEncLevel(v)} style={{ flex: 1, background: encLevel === v ? COLORS.goldSoft : COLORS.surface, border: `1.5px solid ${encLevel === v ? COLORS.gold : COLORS.border}`, borderRadius: 9, padding: "10px 12px", cursor: "pointer" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: encLevel === v ? COLORS.gold : COLORS.text }}>{l}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 2 }}>{d}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <Btn onClick={applyProtection} icon={icons.lock} variant="gold" disabled={!selectedFile || !userPwd || userPwd !== confirmPwd || protecting} style={{ width: "100%", justifyContent: "center" }}>
+              {protecting ? "Encrypting\u2026" : "Protect Document"}
+            </Btn>
+            <p style={{ fontSize: 11, color: COLORS.textDim, marginTop: 10, lineHeight: 1.5 }}>Downloads automatically and is added to your workspace. Keep your password safe \u2014 it cannot be recovered.</p>
           </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Confirm Password</label>
-            <input type="password" value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)} placeholder="Confirm password..."
-              style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-          </div>
-
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Encryption</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[["128", "128-bit"], ["256", "256-bit AES"]].map(([v, l]) => (
-                <div key={v} onClick={() => setEncLevel(v)} style={{ flex: 1, background: encLevel === v ? COLORS.goldSoft : COLORS.surface, border: `1.5px solid ${encLevel === v ? COLORS.gold : COLORS.border}`, borderRadius: 9, padding: "9px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: encLevel === v ? COLORS.gold : COLORS.text, textAlign: "center" }}>
-                  {l}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Document Permissions</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 16px" }}>Set what users can do after opening with the password.</p>
+            <Toggle k="printing"     label="Allow printing"     desc="Users can print the document" />
+            <Toggle k="copying"      label="Allow copying text" desc="Users can copy text to clipboard" />
+            <Toggle k="modifying"    label="Allow editing"      desc="Users can modify the document" />
+            <Toggle k="annotating"   label="Allow annotations"  desc="Users can add comments" />
+            <Toggle k="fillingForms" label="Allow form filling" desc="Users can fill in form fields" />
+            <div style={{ marginTop: 16, background: COLORS.surface, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Summary</div>
+              {[["Printing",permissions.printing],["Copying",permissions.copying],["Editing",permissions.modifying],["Annotations",permissions.annotating],["Forms",permissions.fillingForms]].map(([l,v]) => (
+                <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <span style={{ color: COLORS.textMuted }}>{l}</span>
+                  <span style={{ color: v ? COLORS.success : COLORS.error, fontWeight: 600 }}>{v ? "\u2713 Allowed" : "\u2715 Blocked"}</span>
                 </div>
               ))}
             </div>
           </div>
-
-          <Btn onClick={applyProtection} icon={icons.lock} variant="gold" disabled={!selectedFile} style={{ width: "100%", justifyContent: "center" }}>
-            Protect Document
-          </Btn>
         </div>
+      )}
 
-        {/* Permissions & Redaction */}
-        <div>
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px", marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Document Permissions</h3>
-            <PermToggle key="print" label="Allow Printing" />
-            <PermToggle key="copy" label="Allow Copying Text" />
-            <PermToggle key="edit" label="Allow Editing" />
-            <PermToggle key="annotate" label="Allow Annotations" />
-          </div>
-
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-            <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Redaction</h3>
-            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 12px" }}>Permanently remove sensitive content from your PDF.</p>
-            <input value={redactText} onChange={e => setRedactText(e.target.value)} placeholder="Enter text or pattern to redact..."
-              style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
-            <Btn variant="secondary" icon={icons.search} onClick={() => onToast("Redact applied!", "success")} disabled={!redactText.trim()}>Apply Redaction</Btn>
+      {tab === "unlock" && (
+        <div style={{ maxWidth: 480 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "24px" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>\uD83D\uDD13 Remove Password</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 20px", lineHeight: 1.6 }}>Enter the current password to decrypt the PDF and save an unprotected copy. You must know the password.</p>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Protected file</label>
+              <select onChange={e => setUnlockFile(files[parseInt(e.target.value)])} style={inputStyle}>
+                <option value="">Select file\u2026</option>
+                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Current password</label>
+              <input type="password" value={unlockPwd} onChange={e => setUnlockPwd(e.target.value)} placeholder="Enter the PDF password\u2026" onKeyDown={e => e.key === "Enter" && removeProtection()} style={inputStyle} />
+            </div>
+            <Btn onClick={removeProtection} disabled={!unlockFile || !unlockPwd || unlocking} style={{ width: "100%", justifyContent: "center" }}>
+              {unlocking ? "Unlocking\u2026" : "\uD83D\uDD13 Remove Password & Download"}
+            </Btn>
           </div>
         </div>
-      </div>
+      )}
+
+      {tab === "redact" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "24px" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>\u2B1B Text Redaction</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 18px", lineHeight: 1.6 }}>Permanently blacks out all instances of the specified text across every page. This is irreversible.</p>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Source file</label>
+              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={inputStyle}>
+                <option value="">Select file\u2026</option>
+                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Text to redact</label>
+              <input value={redactText} onChange={e => setRedactText(e.target.value)} placeholder="e.g. John Smith, 555-1234, SSN\u2026" style={inputStyle} />
+              <p style={{ fontSize: 11, color: COLORS.textDim, marginTop: 5 }}>Case-insensitive. All matching text on all pages is blacked out.</p>
+            </div>
+            <div style={{ background: COLORS.accentSoft, border: `1px solid ${COLORS.accent}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: COLORS.accent, lineHeight: 1.5 }}>
+              \u26a0\uFE0F <b>Permanent action.</b> Redaction cannot be undone. Always keep a copy of the original.
+            </div>
+            <Btn onClick={applyRedaction} variant="secondary" disabled={!selectedFile || !redactText.trim() || redacting} style={{ width: "100%", justifyContent: "center" }}>
+              {redacting ? "Redacting\u2026" : "\u2B1B Apply Redaction"}
+            </Btn>
+          </div>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "24px" }}>
+            <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Common redaction targets</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[["Social Security Numbers","SSN"],["Phone numbers","555-"],["Email addresses","@"],["Names","Full name here"],["Addresses","Street, City"],["Account numbers","Account #"]].map(([label, example]) => (
+                <div key={label} onClick={() => setRedactText(example)} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 14px", cursor: "pointer", transition: "border-color 0.12s" }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.accent}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.border}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>{label}</div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 2 }}>Click to use: "{example}"</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
