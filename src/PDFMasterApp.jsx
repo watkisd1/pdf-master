@@ -1879,103 +1879,471 @@ const SignSection = ({ files, onToast, onAddFiles }) => {
 };
 
 // ─── Section: Convert ─────────────────────────────────────────────────────────
-const ConvertSection = ({ files, onToast }) => {
+const ConvertSection = ({ files, onToast, onAddFiles }) => {
   const [selectedFile, setSelectedFile] = useState(null);
-  const [targetFormat, setTargetFormat] = useState("docx");
-  const [converting, setConverting] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [targetFormat, setTargetFormat] = useState("jpg");
+  const [converting, setConverting]     = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [progressMsg, setProgressMsg]   = useState("");
+  const [results, setResults]           = useState([]); // converted file blobs
+  const [imgQuality, setImgQuality]     = useState(0.92);
+  const [imgScale, setImgScale]         = useState(2.0);
+  const [pageRange, setPageRange]       = useState("all");
+  const [toPdfFiles, setToPdfFiles]     = useState([]);
+  const toPdfRef = useRef();
 
-  const pdfTargets = [
-    { id: "docx", label: "Word (.docx)", icon: "W", color: "#4472C4" },
-    { id: "xlsx", label: "Excel (.xlsx)", icon: "X", color: "#217346" },
-    { id: "pptx", label: "PowerPoint (.pptx)", icon: "P", color: "#D24726" },
-    { id: "html", label: "HTML (.html)", icon: "H", color: "#E44D26" },
-    { id: "txt", label: "Plain Text (.txt)", icon: "T", color: COLORS.textMuted },
-    { id: "jpg", label: "Images (.jpg)", icon: "🖼", color: "#FF6B6B" },
-    { id: "png", label: "PNG Images (.png)", icon: "🖼", color: "#4ECDC4" },
-  ];
-  const toPdfSources = [
-    { id: "docx-pdf", label: "Word → PDF", icon: "W", color: "#4472C4" },
-    { id: "xlsx-pdf", label: "Excel → PDF", icon: "X", color: "#217346" },
-    { id: "img-pdf", label: "Image → PDF", icon: "🖼", color: "#FF6B6B" },
-    { id: "html-pdf", label: "HTML → PDF", icon: "H", color: "#E44D26" },
+  // Formats that work entirely in the browser
+  const browserFormats = [
+    { id: "jpg",  label: "JPEG Images",   icon: "\uD83D\uDDBC", color: "#FF6B6B", desc: "One image per page, great for sharing" },
+    { id: "png",  label: "PNG Images",    icon: "\uD83D\uDDBC", color: "#4ECDC4", desc: "Lossless, transparent background support" },
+    { id: "txt",  label: "Plain Text",    icon: "T",            color: "#7B8099", desc: "Extracted text content, no formatting" },
+    { id: "html", label: "HTML Document", icon: "H",            color: "#E44D26", desc: "Web-ready with basic layout preserved" },
   ];
 
-  const startConvert = () => {
-    if (!selectedFile) { onToast("Select a file first.", "error"); return; }
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "8px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+  };
+
+  // ── Parse page range string into array of 1-based page numbers ──────────────
+  const parseRange = (str, total) => {
+    if (!str || str === "all") return Array.from({ length: total }, (_, i) => i + 1);
+    const pages = new Set();
+    str.split(",").forEach(part => {
+      part = part.trim();
+      if (part.includes("-")) {
+        const [s, e] = part.split("-").map(Number);
+        for (let i = s; i <= Math.min(e, total); i++) pages.add(i);
+      } else {
+        const n = Number(part);
+        if (n >= 1 && n <= total) pages.add(n);
+      }
+    });
+    return Array.from(pages).sort((a, b) => a - b);
+  };
+
+  // ── Download a blob ──────────────────────────────────────────────────────────
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Main conversion function ─────────────────────────────────────────────────
+  const startConvert = async () => {
+    if (!selectedFile)     { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw) { onToast("Re-upload the file — no data found.", "error"); return; }
+    setConverting(true); setResults([]); setProgress(0);
+    setProgressMsg("Loading PDF\u2026");
+
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        (window.location.origin || "") + "/pdf.worker.min.js";
+
+      const buffer  = await selectedFile.raw.arrayBuffer();
+      const pdfDoc  = await pdfjsLib.getDocument({ data: buffer }).promise;
+      const total   = pdfDoc.numPages;
+      const pages   = parseRange(pageRange, total);
+      const baseName = selectedFile.name.replace(/\.pdf$/i, "");
+      const converted = [];
+
+      // ── JPG / PNG: render each page to canvas → blob ───────────────────────
+      if (targetFormat === "jpg" || targetFormat === "png") {
+        const mime = targetFormat === "jpg" ? "image/jpeg" : "image/png";
+        const ext  = targetFormat;
+
+        for (let idx = 0; idx < pages.length; idx++) {
+          const pageNum = pages[idx];
+          setProgressMsg(`Rendering page ${pageNum} of ${total}\u2026`);
+          setProgress(Math.round(((idx + 1) / pages.length) * 90));
+
+          const page = await pdfDoc.getPage(pageNum);
+          const vp   = page.getViewport({ scale: imgScale });
+          const canvas = document.createElement("canvas");
+          canvas.width  = vp.width;
+          canvas.height = vp.height;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport: vp }).promise;
+
+          const blob = await new Promise(res =>
+            canvas.toBlob(res, mime, imgQuality)
+          );
+          const filename = pages.length === 1
+            ? `${baseName}.${ext}`
+            : `${baseName}_page${pageNum}.${ext}`;
+          converted.push({ blob, filename, pageNum });
+
+          // Download each page image
+          downloadBlob(blob, filename);
+
+          // Small delay between downloads so browser doesn't block them
+          if (pages.length > 1) await new Promise(r => setTimeout(r, 80));
+        }
+
+        setResults(converted);
+        setProgress(100);
+        setProgressMsg("");
+        onToast(`\u2713 Converted ${pages.length} page(s) to ${ext.toUpperCase()}!`, "success");
+
+      // ── Plain text: extract text from each page ────────────────────────────
+      } else if (targetFormat === "txt") {
+        let fullText = `${baseName}\n${"=".repeat(baseName.length)}\n\n`;
+
+        for (let idx = 0; idx < pages.length; idx++) {
+          const pageNum = pages[idx];
+          setProgressMsg(`Extracting page ${pageNum} of ${total}\u2026`);
+          setProgress(Math.round(((idx + 1) / pages.length) * 90));
+          const page    = await pdfDoc.getPage(pageNum);
+          const content = await page.getTextContent();
+          const text    = content.items.map(item => item.str).join(" ").trim();
+          fullText += `--- Page ${pageNum} ---\n${text || "(no text on this page)"}\n\n`;
+        }
+
+        const blob     = new Blob([fullText], { type: "text/plain" });
+        const filename = `${baseName}.txt`;
+        downloadBlob(blob, filename);
+        setResults([{ blob, filename }]);
+        setProgress(100);
+        setProgressMsg("");
+        onToast(`\u2713 Extracted text from ${pages.length} page(s)!`, "success");
+
+      // ── HTML: render each page to canvas, embed as img tags in HTML ────────
+      } else if (targetFormat === "html") {
+        setProgressMsg("Building HTML document\u2026");
+        let imgTags = "";
+        const thumbScale = Math.min(imgScale, 1.5);
+
+        for (let idx = 0; idx < pages.length; idx++) {
+          const pageNum = pages[idx];
+          setProgressMsg(`Rendering page ${pageNum} for HTML\u2026`);
+          setProgress(Math.round(((idx + 1) / pages.length) * 85));
+          const page   = await pdfDoc.getPage(pageNum);
+          const vp     = page.getViewport({ scale: thumbScale });
+          const canvas = document.createElement("canvas");
+          canvas.width  = vp.width;
+          canvas.height = vp.height;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport: vp }).promise;
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+          imgTags += `
+  <div class="page">
+    <div class="page-label">Page ${pageNum}</div>
+    <img src="${dataUrl}" alt="Page ${pageNum}" style="width:100%;height:auto;display:block;" />
+  </div>`;
+        }
+
+        // Also extract text for searchability
+        setProgressMsg("Adding text layer\u2026");
+        let textContent = "";
+        for (const pageNum of pages) {
+          const page    = await pdfDoc.getPage(pageNum);
+          const content = await page.getTextContent();
+          textContent  += content.items.map(i => i.str).join(" ") + "\n";
+        }
+
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${baseName}</title>
+  <style>
+    body { margin: 0; background: #555; font-family: sans-serif; }
+    .header { background: #C0392B; color: #fff; padding: 16px 24px; font-size: 18px; font-weight: 700; }
+    .pages  { max-width: 900px; margin: 24px auto; display: flex; flex-direction: column; gap: 16px; padding: 0 16px 40px; }
+    .page   { background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.4); border-radius: 4px; overflow: hidden; }
+    .page-label { background: #f0f0f0; padding: 6px 12px; font-size: 11px; color: #666; font-weight: 600; }
+    .text-layer { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">\uD83D\uDCC4 ${baseName}</div>
+  <div class="pages">${imgTags}
+  </div>
+  <div class="text-layer">${textContent.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>
+</body>
+</html>`;
+
+        const blob     = new Blob([html], { type: "text/html" });
+        const filename = `${baseName}.html`;
+        downloadBlob(blob, filename);
+        setResults([{ blob, filename }]);
+        setProgress(100);
+        setProgressMsg("");
+        onToast(`\u2713 Converted to HTML (${pages.length} pages)!`, "success");
+      }
+
+      setConverting(false);
+    } catch (err) {
+      console.error(err);
+      setConverting(false);
+      setProgressMsg("");
+      onToast(`Conversion failed: ${err.message}`, "error");
+    }
+  };
+
+  // ── Images → PDF conversion ──────────────────────────────────────────────────
+  const convertImagesToPdf = async () => {
+    if (toPdfFiles.length === 0) { onToast("Add image files first.", "error"); return; }
     setConverting(true); setProgress(0);
-    const interval = setInterval(() => {
-      setProgress(p => {
-        if (p >= 100) { clearInterval(interval); setConverting(false); onToast(`Converted to ${targetFormat.toUpperCase()} successfully!`, "success"); return 100; }
-        return p + Math.random() * 20;
-      });
-    }, 200);
+    setProgressMsg("Building PDF from images\u2026");
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const pdfDoc = await PDFDocument.create();
+
+      for (let i = 0; i < toPdfFiles.length; i++) {
+        const file = toPdfFiles[i];
+        setProgressMsg(`Adding image ${i + 1} of ${toPdfFiles.length}\u2026`);
+        setProgress(Math.round(((i + 1) / toPdfFiles.length) * 90));
+        const buffer = await file.arrayBuffer();
+        const ext    = file.name.split(".").pop().toLowerCase();
+        let   img;
+        if (ext === "png") {
+          img = await pdfDoc.embedPng(buffer);
+        } else {
+          img = await pdfDoc.embedJpg(buffer);
+        }
+        const page = pdfDoc.addPage([img.width, img.height]);
+        page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+      }
+
+      const bytes    = await pdfDoc.save();
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const filename = "images_converted.pdf";
+      downloadBlob(blob, filename);
+
+      const rawFile = new File([blob], filename, { type: "application/pdf" });
+      if (onAddFiles) onAddFiles([rawFile]);
+
+      setProgress(100); setProgressMsg("");
+      setToPdfFiles([]);
+      onToast(`\u2713 ${toPdfFiles.length} image(s) converted to PDF!`, "success");
+      setConverting(false);
+    } catch (err) {
+      console.error(err);
+      setConverting(false); setProgressMsg("");
+      onToast(`Conversion failed: ${err.message}`, "error");
+    }
   };
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Convert Files</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>
+        Convert Files
+      </h2>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-        {/* PDF → Other */}
-        <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>PDF → Other Formats</h3>
-          <p style={{ margin: "0 0 18px", fontSize: 12, color: COLORS.textMuted }}>Convert a PDF to Word, Excel, HTML, and more.</p>
 
-          {/* File picker */}
+        {/* ── PDF → Other ── */}
+        <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
+          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>PDF \u2192 Other formats</h3>
+          <p style={{ margin: "0 0 18px", fontSize: 12, color: COLORS.textMuted }}>All conversions run in the browser \u2014 no upload required.</p>
+
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Source PDF</label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Source PDF</label>
             {files.length === 0 ? (
-              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "10px", background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>No files available</div>
+              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "12px", background: COLORS.surface, borderRadius: 8, border: `1px dashed ${COLORS.border}`, textAlign: "center" }}>Upload a PDF first</div>
             ) : (
-              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none" }}>
-                <option value="">Select a file...</option>
+              <select onChange={e => { setSelectedFile(files[parseInt(e.target.value)]); setResults([]); }} style={inputStyle}>
+                <option value="">Select a file\u2026</option>
                 {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
               </select>
             )}
           </div>
 
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 8, textTransform: "uppercase" }}>Target Format</label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {pdfTargets.map(t => (
-                <div key={t.id} onClick={() => setTargetFormat(t.id)} style={{ background: targetFormat === t.id ? `${t.color}20` : COLORS.surface, border: `1.5px solid ${targetFormat === t.id ? t.color : COLORS.border}`, borderRadius: 9, padding: "9px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, transition: "all 0.15s" }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: t.color }}>{t.icon}</span>
-                  <span style={{ fontSize: 12, color: targetFormat === t.id ? t.color : COLORS.text, fontWeight: 500 }}>{t.label}</span>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>Target format</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {browserFormats.map(f => (
+                <div key={f.id} onClick={() => { setTargetFormat(f.id); setResults([]); }} style={{ background: targetFormat === f.id ? `${f.color}18` : COLORS.surface, border: `1.5px solid ${targetFormat === f.id ? f.color : COLORS.border}`, borderRadius: 9, padding: "10px 14px", cursor: "pointer", transition: "all 0.12s" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 16, minWidth: 22 }}>{f.icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: targetFormat === f.id ? f.color : COLORS.text }}>{f.label}</span>
+                  </div>
+                  {targetFormat === f.id && <p style={{ margin: "4px 0 0 30px", fontSize: 11, color: COLORS.textMuted }}>{f.desc}</p>}
                 </div>
               ))}
             </div>
           </div>
 
+          {/* Image quality options */}
+          {(targetFormat === "jpg" || targetFormat === "png") && (
+            <div style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Scale</label>
+                <select value={imgScale} onChange={e => setImgScale(parseFloat(e.target.value))} style={inputStyle}>
+                  <option value="1.0">1x — Screen (fast)</option>
+                  <option value="1.5">1.5x — Good</option>
+                  <option value="2.0">2x — High quality</option>
+                  <option value="3.0">3x — Print quality</option>
+                </select>
+              </div>
+              {targetFormat === "jpg" && (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Quality</label>
+                  <select value={imgQuality} onChange={e => setImgQuality(parseFloat(e.target.value))} style={inputStyle}>
+                    <option value="0.6">60% — Small file</option>
+                    <option value="0.8">80% — Balanced</option>
+                    <option value="0.92">92% — High</option>
+                    <option value="1.0">100% — Maximum</option>
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Page range */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Page range</label>
+            <input value={pageRange} onChange={e => setPageRange(e.target.value)} placeholder="all  or  1-3, 5, 7-10" style={inputStyle} />
+          </div>
+
+          {/* Progress */}
           {converting && (
             <div style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>
-                <span>Converting...</span><span>{Math.round(Math.min(progress, 100))}%</span>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+                <span>{progressMsg || "Converting\u2026"}</span>
+                <span>{progress}%</span>
               </div>
               <div style={{ background: COLORS.surface, borderRadius: 100, height: 6, overflow: "hidden" }}>
-                <div style={{ width: `${Math.min(progress, 100)}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.1s" }} />
+                <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
               </div>
             </div>
           )}
-          <Btn onClick={startConvert} icon={icons.convert} disabled={converting || !selectedFile}>
-            {converting ? "Converting..." : "Convert Now"}
+
+          <Btn
+            onClick={startConvert}
+            icon={icons.convert}
+            disabled={converting || !selectedFile}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            {converting ? "Converting\u2026" : `Convert to ${browserFormats.find(f => f.id === targetFormat)?.label}`}
           </Btn>
+
+          {/* Results */}
+          {results.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.success, marginBottom: 8 }}>
+                \u2713 {results.length} file(s) ready \u2014 check your Downloads folder
+              </div>
+              {results.slice(0, 5).map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", background: COLORS.surface, borderRadius: 7, marginBottom: 5, fontSize: 12 }}>
+                  <span style={{ color: COLORS.success }}>\u2713</span>
+                  <span style={{ flex: 1, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.filename}</span>
+                  <button onClick={() => downloadBlob(r.blob, r.filename)} style={{ background: "none", border: "none", color: COLORS.accent, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}>
+                    Re-download
+                  </button>
+                </div>
+              ))}
+              {results.length > 5 && (
+                <div style={{ fontSize: 11, color: COLORS.textDim }}>+{results.length - 5} more files in Downloads</div>
+              )}
+            </div>
+          )}
+
+          {/* Capability note for formats that need a backend */}
+          <div style={{ marginTop: 14, background: COLORS.surface, borderRadius: 8, padding: "10px 14px", fontSize: 11, color: COLORS.textDim, lineHeight: 1.6 }}>
+            \uD83D\uDCA1 <b style={{ color: COLORS.text }}>Word, Excel, PowerPoint</b> conversion requires a server-side service (Adobe PDF Services, CloudConvert, or pdf.co). The formats above work entirely in your browser.
+          </div>
         </div>
 
-        {/* Other → PDF */}
+        {/* ── Images → PDF ── */}
         <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Other → PDF</h3>
-          <p style={{ margin: "0 0 18px", fontSize: 12, color: COLORS.textMuted }}>Convert Word, Excel, images, and more to PDF.</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {toPdfSources.map(s => (
-              <div key={s.id} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
-                <span style={{ fontSize: 18, fontWeight: 800, color: s.color, minWidth: 24 }}>{s.icon}</span>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{s.label}</span>
-                <Btn variant="secondary" small icon={icons.upload} onClick={() => onToast(`Upload your ${s.label.split(" ")[0]} file`, "")}>Upload</Btn>
+          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Images \u2192 PDF</h3>
+          <p style={{ margin: "0 0 16px", fontSize: 12, color: COLORS.textMuted }}>Combine one or more JPG or PNG images into a single PDF. Each image becomes one page.</p>
+
+          <input
+            ref={toPdfRef}
+            type="file"
+            multiple
+            accept=".jpg,.jpeg,.png,.webp"
+            style={{ display: "none" }}
+            onChange={e => {
+              setToPdfFiles(prev => [...prev, ...Array.from(e.target.files)]);
+              e.target.value = "";
+            }}
+          />
+
+          {toPdfFiles.length === 0 ? (
+            <div
+              data-dropzone="true"
+              onClick={() => toPdfRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.style.borderColor = COLORS.accent; }}
+              onDragLeave={e => { e.currentTarget.style.borderColor = COLORS.border; }}
+              onDrop={e => {
+                e.preventDefault(); e.stopPropagation();
+                e.currentTarget.style.borderColor = COLORS.border;
+                const dropped = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith("image/"));
+                if (dropped.length) setToPdfFiles(prev => [...prev, ...dropped]);
+              }}
+              style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 12, padding: "36px 20px", textAlign: "center", cursor: "pointer", background: COLORS.surface, marginBottom: 14, transition: "border-color 0.15s" }}
+            >
+              <Icon d={icons.upload} size={30} color={COLORS.textDim} />
+              <p style={{ margin: "10px 0 4px", fontSize: 14, fontWeight: 600, color: COLORS.text }}>Drop images here</p>
+              <p style={{ margin: 0, fontSize: 12, color: COLORS.textMuted }}>JPG, PNG, WebP \u2014 each image becomes one page</p>
+            </div>
+          ) : (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>{toPdfFiles.length} image(s) selected</span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Btn variant="ghost" small onClick={() => toPdfRef.current?.click()} icon={icons.plus}>Add more</Btn>
+                  <Btn variant="ghost" small onClick={() => setToPdfFiles([])}>Clear all</Btn>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 240, overflowY: "auto" }}>
+                {toPdfFiles.map((f, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: COLORS.surface, borderRadius: 8, padding: "7px 12px" }}>
+                    <span style={{ fontSize: 16 }}>\uD83D\uDDBC</span>
+                    <span style={{ flex: 1, fontSize: 12, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                    <span style={{ fontSize: 11, color: COLORS.textMuted }}>{(f.size / 1024).toFixed(0)} KB</span>
+                    <button onClick={() => setToPdfFiles(prev => prev.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: COLORS.error, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>\u00d7</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Btn
+            onClick={convertImagesToPdf}
+            variant="teal"
+            icon={icons.file}
+            disabled={converting || toPdfFiles.length === 0}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            {converting ? progressMsg || "Converting\u2026" : `Convert ${toPdfFiles.length > 0 ? toPdfFiles.length + " image(s)" : "images"} to PDF`}
+          </Btn>
+
+          {toPdfFiles.length > 0 && !converting && (
+            <p style={{ fontSize: 11, color: COLORS.textDim, marginTop: 10, lineHeight: 1.5 }}>
+              Images will appear in the order listed above. Each becomes one full page in the PDF.
+            </p>
+          )}
+
+          <div style={{ marginTop: 20, borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+            <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: COLORS.text }}>Other conversions</h4>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 10px", lineHeight: 1.6 }}>
+              These formats require a free external API. The most reliable option is <b style={{ color: COLORS.text }}>CloudConvert</b> or <b style={{ color: COLORS.text }}>pdf.co</b>.
+            </p>
+            {[
+              { label: "Word (.docx) \u2192 PDF", note: "Upload to CloudConvert" },
+              { label: "Excel (.xlsx) \u2192 PDF", note: "Upload to CloudConvert" },
+              { label: "PowerPoint (.pptx) \u2192 PDF", note: "Upload to CloudConvert" },
+            ].map((item, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: COLORS.surface, borderRadius: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>{item.label}</span>
+                <a href="https://cloudconvert.com" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: COLORS.accent, fontWeight: 700, textDecoration: "none" }}>
+                  Open \u2192
+                </a>
               </div>
             ))}
-          </div>
-          <div style={{ marginTop: 18, padding: "14px", background: COLORS.surface, borderRadius: 10, border: `1px dashed ${COLORS.border}` }}>
-            <div style={{ fontSize: 12, color: COLORS.textMuted, textAlign: "center" }}>Or drag & drop any file here to auto-detect format and convert to PDF</div>
           </div>
         </div>
       </div>
