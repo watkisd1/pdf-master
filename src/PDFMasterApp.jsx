@@ -2013,11 +2013,28 @@ const ConvertSection = ({ files, onToast, onAddFiles }) => {
 
         for (let idx = 0; idx < pages.length; idx++) {
           const pageNum = pages[idx];
-          setProgressMsg(`Extracting page ${pageNum} of ${total}\u2026`);
+          setProgressMsg(`Extracting page ${pageNum} of ${total}…`);
           setProgress(Math.round(((idx + 1) / pages.length) * 90));
           const page    = await pdfDoc.getPage(pageNum);
-          const content = await page.getTextContent();
-          const text    = content.items.map(item => item.str).join(" ").trim();
+          const content = await page.getTextContent({ includeMarkedContent: false });
+          // Smart join — handles character-fragmented PDFs correctly
+          const sorted  = [...content.items].sort((a, b) => {
+            const yDiff = Math.round(b.transform[5]) - Math.round(a.transform[5]);
+            return yDiff !== 0 ? yDiff : a.transform[4] - b.transform[4];
+          });
+          let text = ""; let prevItem = null;
+          sorted.forEach(item => {
+            if (!item.str) return;
+            if (!prevItem) { text += item.str; prevItem = item; return; }
+            const gap = item.transform[4] - (prevItem.transform[4] + (prevItem.width || 0));
+            const emW = (item.height || 10) * 0.45;
+            const newLine = Math.abs(item.transform[5] - prevItem.transform[5]) > 2;
+            if (newLine) { text += "\n" + item.str; }
+            else if (gap > emW * 0.3 && !text.endsWith(" ") && !item.str.startsWith(" ")) { text += " " + item.str; }
+            else { text += item.str; }
+            prevItem = item;
+          });
+          text = text.trim();
           fullText += `--- Page ${pageNum} ---\n${text || "(no text on this page)"}\n\n`;
         }
 
@@ -2429,9 +2446,26 @@ const ExtractSection = ({ files, onToast }) => {
           setProgressMsg(`Extracting page ${pageNum} of ${total}…`);
           setProgress(Math.round(((i + 1) / pagesToProcess.length) * 90));
           const page    = await pdfDoc.getPage(pageNum);
-          const content = await page.getTextContent();
-          const pageText = content.items.map(item => item.str).join(" ");
-          if (pageText.trim()) {
+          const content = await page.getTextContent({ includeMarkedContent: false });
+          // Smart join — handles character-fragmented PDFs
+          const sortedItems = [...content.items].sort((a, b) => {
+            const yDiff = Math.round(b.transform[5]) - Math.round(a.transform[5]);
+            return yDiff !== 0 ? yDiff : a.transform[4] - b.transform[4];
+          });
+          let pageText = ""; let prevIt = null;
+          sortedItems.forEach(it => {
+            if (it.str === undefined) return;
+            if (!prevIt) { pageText += it.str; prevIt = it; return; }
+            const gap    = it.transform[4] - (prevIt.transform[4] + (prevIt.width || 0));
+            const emW    = (it.height || 10) * 0.45;
+            const newLn  = Math.abs(it.transform[5] - prevIt.transform[5]) > 2;
+            if (newLn) { pageText += "\n" + it.str; }
+            else if (gap > emW * 0.3 && !pageText.endsWith(" ") && !it.str.startsWith(" ")) { pageText += " " + it.str; }
+            else { pageText += it.str; }
+            prevIt = it;
+          });
+          pageText = pageText.trim();
+          if (pageText) {
             fullText += `\n─── Page ${pageNum} ───\n${pageText}\n`;
           } else {
             fullText += `\n─── Page ${pageNum} ─── (no extractable text — try OCR)\n`;
@@ -3164,26 +3198,76 @@ const SearchSection = ({ files, onToast, onView }) => {
 
           for (let p = 1; p <= pdfDoc.numPages; p++) {
             const page    = await pdfDoc.getPage(p);
-            const content = await page.getTextContent();
+            const content = await page.getTextContent({ includeMarkedContent: false });
 
-            // Build lines by grouping text items that share the same Y position
-            // PDF.js gives us individual text runs — group by vertical position
+            // ── Smart text joining ──────────────────────────────────────────
+            // PDF.js returns individual text runs. Some PDFs split every
+            // character into a separate run (e.g. "C","o","u","r","t").
+            // We need to decide whether to join runs with a space or directly.
+            //
+            // Rules:
+            //  1. Same Y line, consecutive X positions with no gap → concatenate
+            //  2. Same Y line, gap larger than ~1 character width → add space
+            //  3. Different Y → new line
+
+            // Group by Y position (rounded to 1pt to handle sub-pixel differences)
             const lineMap = new Map();
             content.items.forEach(item => {
-              if (!item.str?.trim()) return;
-              // Round Y to nearest 2pts to group items on the same visual line
-              const y = Math.round(item.transform[5] / 2) * 2;
+              if (!item.str) return; // keep spaces, filter only truly empty
+              const y = Math.round(item.transform[5]); // 1pt precision
               if (!lineMap.has(y)) lineMap.set(y, []);
-              lineMap.get(y).push(item.str);
+              lineMap.get(y).push({
+                str:    item.str,
+                x:      item.transform[4],
+                width:  item.width || 0,
+                height: item.height || 10,
+              });
             });
 
-            // Sort by Y descending (PDF Y=0 is bottom, so higher Y = higher on page)
+            // Sort by Y descending (PDF origin is bottom-left)
             const sortedYs = Array.from(lineMap.keys()).sort((a, b) => b - a);
-            const lines    = sortedYs
-              .map(y => lineMap.get(y).join(" ").trim())
-              .filter(Boolean);
 
-            // Full text for quick matching
+            const lines = sortedYs.map(y => {
+              // Sort items on this line by X position left-to-right
+              const items = lineMap.get(y).sort((a, b) => a.x - b.x);
+
+              // Smart join: concatenate items, inserting a space only when
+              // there is a visible gap between the end of one item and the
+              // start of the next
+              let line = "";
+              for (let i = 0; i < items.length; i++) {
+                const cur  = items[i];
+                const prev = items[i - 1];
+
+                if (i === 0) {
+                  line += cur.str;
+                  continue;
+                }
+
+                // Expected X of next character = prev.x + prev.width
+                const expectedX = prev.x + prev.width;
+                const actualX   = cur.x;
+                const gap       = actualX - expectedX;
+
+                // Threshold: if gap > ~30% of the average character width,
+                // insert a space. For character-by-character PDFs the gap
+                // will be near 0 so no space is added.
+                const avgCharW = prev.height * 0.45; // rough em width
+                if (gap > avgCharW * 0.3) {
+                  // Meaningful gap — add space unless the run already starts
+                  // with a space or the previous run ends with one
+                  if (!line.endsWith(" ") && !cur.str.startsWith(" ")) {
+                    line += " ";
+                  }
+                }
+
+                line += cur.str;
+              }
+
+              return line.trim();
+            }).filter(Boolean);
+
+            // Full page text (lines joined with newline for line-based search)
             const text = lines.join("\n").trim();
             if (text) pages.push({ page: p, text, lines });
           }
