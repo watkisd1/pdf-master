@@ -3269,7 +3269,63 @@ const SearchSection = ({ files, onToast, onView }) => {
 
             // Full page text (lines joined with newline for line-based search)
             const text = lines.join("\n").trim();
-            if (text) pages.push({ page: p, text, lines });
+
+            // ── Also extract form field values from this page ─────────────────
+            // AcroForm field values live in the annotation layer, not in
+            // getTextContent(). We read them separately and append to the
+            // page text so searches hit filled-in form data too.
+            let formText = "";
+            try {
+              const annotations = await page.getAnnotations();
+              const fieldLines  = [];
+
+              annotations.forEach(ann => {
+                // Widget annotations are form fields
+                if (ann.subtype !== "Widget") return;
+
+                const fieldName  = ann.fieldName  || ann.alternativeText || "";
+                const fieldValue = ann.fieldValue || ann.buttonValue || "";
+
+                // Text fields, combo boxes, list boxes
+                if (typeof fieldValue === "string" && fieldValue.trim()) {
+                  fieldLines.push(fieldValue.trim());
+                  if (fieldName) fieldLines.push(`${fieldName}: ${fieldValue.trim()}`);
+                }
+
+                // Checkboxes and radio buttons
+                if (ann.fieldType === "Btn") {
+                  const checked = fieldValue !== "Off" && fieldValue !== "" && fieldValue !== null;
+                  if (checked && fieldName) {
+                    fieldLines.push(`${fieldName}: ${fieldValue}`);
+                  }
+                }
+
+                // Choice fields (dropdowns, list boxes) — selected options
+                if (ann.fieldType === "Ch" && ann.fieldValue) {
+                  const val = Array.isArray(ann.fieldValue)
+                    ? ann.fieldValue.join(", ")
+                    : ann.fieldValue;
+                  if (val.trim()) {
+                    fieldLines.push(val.trim());
+                    if (fieldName) fieldLines.push(`${fieldName}: ${val.trim()}`);
+                  }
+                }
+              });
+
+              if (fieldLines.length > 0) {
+                formText = fieldLines.filter(Boolean).join("\n");
+              }
+            } catch (annotErr) {
+              // Annotations not available — skip silently
+            }
+
+            // Merge page text and form values
+            const fullPageText = [text, formText].filter(Boolean).join("\n");
+            const allLines     = formText
+              ? [...lines, ...formText.split("\n").filter(Boolean)]
+              : lines;
+
+            if (fullPageText) pages.push({ page: p, text: fullPageText, lines: allLines });
           }
 
           newIndex[file.name] = pages;
@@ -3286,7 +3342,7 @@ const SearchSection = ({ files, onToast, onView }) => {
       setIndexMsg("");
 
       const totalPages = Object.values(newIndex).reduce((sum, pages) => sum + pages.length, 0);
-      onToast(`✓ Indexed ${pdfFiles.length} file(s) — ${totalPages} pages searchable`, "success");
+      onToast(`✓ Indexed ${pdfFiles.length} file(s) — ${totalPages} pages including form fields`, "success");
     } catch (err) {
       console.error(err);
       setIndexing(false);
@@ -3598,7 +3654,7 @@ const SearchSection = ({ files, onToast, onView }) => {
           </p>
           <p style={{ margin: 0, fontSize: 13, color: COLORS.textMuted, maxWidth: 320, lineHeight: 1.6 }}>
             {indexed
-              ? `${totalIndexedPages} pages indexed across ${pdfFiles.length} file(s). Type a search term above and press Enter.`
+              ? `${totalIndexedPages} pages indexed across ${pdfFiles.length} file(s) — includes form field values. Type a search term above and press Enter.`
               : "Click Build index above to scan all your PDFs. This only takes a few seconds and you only need to do it once per session."}
           </p>
         </div>
