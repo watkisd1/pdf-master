@@ -1985,88 +1985,408 @@ const ConvertSection = ({ files, onToast }) => {
 
 // ─── Section: Extract & Parse ─────────────────────────────────────────────────
 const ExtractSection = ({ files, onToast }) => {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [extractType, setExtractType] = useState("text");
-  const [results, setResults] = useState(null);
-  const [extracting, setExtracting] = useState(false);
+  const [selectedFile, setSelectedFile]   = useState(null);
+  const [extractType, setExtractType]     = useState("text");
+  const [results, setResults]             = useState(null);
+  const [extracting, setExtracting]       = useState(false);
+  const [progress, setProgress]           = useState(0);
+  const [progressMsg, setProgressMsg]     = useState("");
+  const [ocrEnabled, setOcrEnabled]       = useState(false);
+  const [pageRange, setPageRange]         = useState("all");
 
   const types = [
-    { id: "text", label: "Text Content", icon: "T" },
-    { id: "tables", label: "Tables", icon: "⊞" },
-    { id: "images", label: "Images", icon: "🖼" },
-    { id: "metadata", label: "Metadata", icon: "ℹ" },
-    { id: "forms", label: "Form Fields", icon: "☑" },
-    { id: "links", label: "Hyperlinks", icon: "🔗" },
+    { id: "text",     label: "Text Content",  icon: "T",  desc: "Extract all readable text from every page" },
+    { id: "metadata", label: "Metadata",      icon: "ℹ",  desc: "Title, author, dates, creator, file info" },
+    { id: "links",    label: "Hyperlinks",    icon: "🔗", desc: "All URLs and mailto links in the document" },
+    { id: "pages",    label: "Page Info",     icon: "📄", desc: "Page count, dimensions, rotation per page" },
+    { id: "ocr",      label: "OCR (Scanned)", icon: "🔍", desc: "Read text from scanned or image-based PDFs" },
   ];
 
-  const mockResults = {
-    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam...\n\nSection 2: Analysis\nDuis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.",
-    tables: "Table 1 extracted:\n| Name | Value | Percent |\n|------|-------|--------|\n| Item A | 42 | 35% |\n| Item B | 78 | 65% |",
-    metadata: "Title: Sample Document\nAuthor: John Smith\nCreator: PDF Master\nCreated: 2025-01-15\nModified: 2025-03-20\nPages: 12\nFile Size: 245 KB\nEncrypted: No",
-    images: "Found 3 images:\n• Image 1: 640×480 JPEG (p.2)\n• Image 2: 1024×768 PNG (p.5)\n• Image 3: 320×240 JPEG (p.9)",
-    forms: "Found 4 form fields:\n• Name (Text Field)\n• Email (Text Field)\n• Agree to Terms (Checkbox)\n• Signature (Signature Field)",
-    links: "Found 2 hyperlinks:\n• https://example.com (p.1)\n• mailto:contact@example.com (p.3)",
+  // ── Download helper ──────────────────────────────────────────────────────────
+  const downloadText = (text, filename) => {
+    const blob = new Blob([text], { type: "text/plain" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const doExtract = () => {
-    if (!selectedFile) { onToast("Select a file first.", "error"); return; }
+  // ── Real extraction using PDF.js ─────────────────────────────────────────────
+  const doExtract = async () => {
+    if (!selectedFile)      { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw)  { onToast("Re-upload this file — no data found.", "error"); return; }
     setExtracting(true);
-    setTimeout(() => { setResults(mockResults[extractType]); setExtracting(false); }, 1000);
+    setResults(null);
+    setProgress(0);
+    setProgressMsg("Loading PDF…");
+
+    try {
+      // Dynamically import PDF.js
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        (window.location.origin || "") + "/pdf.worker.min.js";
+
+      const buffer = await selectedFile.raw.arrayBuffer();
+      const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
+      const total  = pdfDoc.numPages;
+
+      // ── Text extraction ────────────────────────────────────────────────────
+      if (extractType === "text") {
+        let fullText = "";
+        const pagesToProcess = pageRange === "all"
+          ? Array.from({ length: total }, (_, i) => i + 1)
+          : pageRange.split(",").flatMap(part => {
+              const [s, e] = part.trim().split("-").map(Number);
+              return e ? Array.from({ length: e - s + 1 }, (_, i) => s + i) : [s];
+            }).filter(n => n >= 1 && n <= total);
+
+        for (let i = 0; i < pagesToProcess.length; i++) {
+          const pageNum = pagesToProcess[i];
+          setProgressMsg(`Extracting page ${pageNum} of ${total}…`);
+          setProgress(Math.round(((i + 1) / pagesToProcess.length) * 90));
+          const page    = await pdfDoc.getPage(pageNum);
+          const content = await page.getTextContent();
+          const pageText = content.items.map(item => item.str).join(" ");
+          if (pageText.trim()) {
+            fullText += `\n─── Page ${pageNum} ───\n${pageText}\n`;
+          } else {
+            fullText += `\n─── Page ${pageNum} ─── (no extractable text — try OCR)\n`;
+          }
+        }
+        setResults({ type: "text", content: fullText.trim() || "No text found.", pages: pagesToProcess.length });
+
+      // ── Metadata extraction ────────────────────────────────────────────────
+      } else if (extractType === "metadata") {
+        setProgressMsg("Reading metadata…");
+        setProgress(40);
+        const meta   = await pdfDoc.getMetadata().catch(() => ({}));
+        const info   = meta?.info || {};
+        const lines  = [
+          `Title:        ${info.Title        || "—"}`,
+          `Author:       ${info.Author       || "—"}`,
+          `Subject:      ${info.Subject      || "—"}`,
+          `Keywords:     ${info.Keywords     || "—"}`,
+          `Creator:      ${info.Creator      || "—"}`,
+          `Producer:     ${info.Producer     || "—"}`,
+          `Created:      ${info.CreationDate || "—"}`,
+          `Modified:     ${info.ModDate      || "—"}`,
+          `PDF Version:  ${info.PDFFormatVersion || "—"}`,
+          ``,
+          `Pages:        ${total}`,
+          `File size:    ${(selectedFile.size / 1024).toFixed(1)} KB`,
+          `Encrypted:    ${info.IsEncrypted  ? "Yes" : "No"}`,
+          `Form fields:  ${info.IsAcroFormPresent ? "Yes" : "No"}`,
+          `Tagged PDF:   ${info.IsTaggedPDF  ? "Yes" : "No"}`,
+        ];
+        setProgress(100);
+        setResults({ type: "metadata", content: lines.join("\n") });
+
+      // ── Hyperlink extraction ───────────────────────────────────────────────
+      } else if (extractType === "links") {
+        let allLinks = [];
+        for (let p = 1; p <= total; p++) {
+          setProgressMsg(`Scanning page ${p} of ${total} for links…`);
+          setProgress(Math.round((p / total) * 90));
+          const page        = await pdfDoc.getPage(p);
+          const annotations = await page.getAnnotations();
+          annotations.forEach(ann => {
+            if (ann.subtype === "Link") {
+              if (ann.url) {
+                allLinks.push(`• [Page ${p}] ${ann.url}`);
+              } else if (ann.dest) {
+                allLinks.push(`• [Page ${p}] Internal link → ${JSON.stringify(ann.dest)}`);
+              } else if (ann.action?.URI) {
+                allLinks.push(`• [Page ${p}] ${ann.action.URI}`);
+              }
+            }
+          });
+        }
+        setProgress(100);
+        setResults({
+          type: "links",
+          content: allLinks.length > 0
+            ? `Found ${allLinks.length} link(s):\n\n${allLinks.join("\n")}`
+            : "No hyperlinks found in this document.",
+        });
+
+      // ── Page info ──────────────────────────────────────────────────────────
+      } else if (extractType === "pages") {
+        let info = `PDF contains ${total} page(s)\n\n`;
+        for (let p = 1; p <= total; p++) {
+          setProgressMsg(`Reading page ${p} info…`);
+          setProgress(Math.round((p / total) * 90));
+          const page = await pdfDoc.getPage(p);
+          const vp   = page.getViewport({ scale: 1 });
+          const rot  = page.rotate || 0;
+          info += `Page ${p}: ${Math.round(vp.width)} × ${Math.round(vp.height)} pts`;
+          info += ` (${(vp.width * 0.0352778).toFixed(1)} × ${(vp.height * 0.0352778).toFixed(1)} cm)`;
+          if (rot) info += ` — rotated ${rot}°`;
+          info += "\n";
+        }
+        setProgress(100);
+        setResults({ type: "pages", content: info.trim() });
+
+      // ── OCR using Tesseract.js ─────────────────────────────────────────────
+      } else if (extractType === "ocr") {
+        setProgressMsg("Loading OCR engine…");
+        setProgress(5);
+
+        let Tesseract;
+        try {
+          Tesseract = await import("tesseract.js");
+        } catch {
+          setResults({
+            type: "ocr",
+            content: "Tesseract.js is not installed.\n\nRun this command in your pdf-master folder:\n\n  npm install tesseract.js\n\nThen restart the app and try again.",
+            error: true,
+          });
+          setExtracting(false);
+          return;
+        }
+
+        const worker = await Tesseract.createWorker("eng", 1, {
+          logger: m => {
+            if (m.status === "recognizing text") {
+              setProgress(10 + Math.round(m.progress * 85));
+              setProgressMsg(`OCR page ${m.jobId || 1}… ${Math.round(m.progress * 100)}%`);
+            }
+          },
+        });
+
+        let ocrText = "";
+        const pagesToOCR = Math.min(total, 5); // OCR up to 5 pages (can be slow)
+
+        for (let p = 1; p <= pagesToOCR; p++) {
+          setProgressMsg(`Rendering page ${p} for OCR…`);
+          const page = await pdfDoc.getPage(p);
+          const vp   = page.getViewport({ scale: 2.0 }); // higher scale = better OCR
+          const canvas = document.createElement("canvas");
+          canvas.width  = vp.width;
+          canvas.height = vp.height;
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+
+          setProgressMsg(`Running OCR on page ${p}…`);
+          const { data: { text } } = await worker.recognize(canvas);
+          ocrText += `\n─── Page ${p} (OCR) ───\n${text.trim()}\n`;
+        }
+
+        await worker.terminate();
+        setProgress(100);
+
+        const suffix = pagesToOCR < total ? `\n\n(Showing first ${pagesToOCR} of ${total} pages — OCR can be slow)` : "";
+        setResults({ type: "ocr", content: (ocrText.trim() || "No text detected.") + suffix });
+      }
+
+      setProgress(100);
+      setProgressMsg("");
+      setExtracting(false);
+      onToast(`Extraction complete!`, "success");
+
+    } catch (err) {
+      console.error(err);
+      setExtracting(false);
+      setProgressMsg("");
+      onToast(`Extraction failed: ${err.message}`, "error");
+      setResults({ type: extractType, content: `Error: ${err.message}`, error: true });
+    }
+  };
+
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "8px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
   };
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Extract & Parse</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>
+        Extract & OCR
+      </h2>
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 24 }}>
+
+        {/* ── Left: Controls ── */}
         <div>
+          {/* File picker */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Source File</label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Source file
+            </label>
             {files.length === 0 ? (
-              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "10px", background: COLORS.surface2, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>No files available</div>
+              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "12px", background: COLORS.surface2, borderRadius: 8, border: `1px dashed ${COLORS.border}`, textAlign: "center" }}>
+                Upload a PDF first
+              </div>
             ) : (
-              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none" }}>
-                <option value="">Select a file...</option>
-                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              <select
+                onChange={e => setSelectedFile(files[parseInt(e.target.value)])}
+                style={{ ...inputStyle }}
+              >
+                <option value="">Select a file…</option>
+                {files.map((f, i) => (
+                  <option key={i} value={i}>{f.name}</option>
+                ))}
               </select>
             )}
           </div>
 
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 8, textTransform: "uppercase" }}>Extract Type</label>
+          {/* Extraction type */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Extract type
+            </label>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {types.map(t => (
-                <div key={t.id} onClick={() => setExtractType(t.id)} style={{ background: extractType === t.id ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${extractType === t.id ? COLORS.accent : COLORS.border}`, borderRadius: 9, padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, transition: "all 0.15s" }}>
-                  <span style={{ fontSize: 15, minWidth: 20 }}>{t.icon}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: extractType === t.id ? COLORS.accent : COLORS.text }}>{t.label}</span>
+                <div
+                  key={t.id}
+                  onClick={() => setExtractType(t.id)}
+                  style={{
+                    background: extractType === t.id ? COLORS.accentSoft : COLORS.surface2,
+                    border: `1.5px solid ${extractType === t.id ? COLORS.accent : COLORS.border}`,
+                    borderRadius: 9, padding: "10px 14px", cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 16, minWidth: 22 }}>{t.icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: extractType === t.id ? COLORS.accent : COLORS.text }}>
+                      {t.label}
+                    </span>
+                    {t.id === "ocr" && (
+                      <span style={{ fontSize: 10, background: COLORS.gold + "30", color: COLORS.gold, border: `1px solid ${COLORS.gold}`, borderRadius: 100, padding: "1px 7px", fontWeight: 700 }}>
+                        Tesseract
+                      </span>
+                    )}
+                  </div>
+                  {extractType === t.id && (
+                    <p style={{ margin: "4px 0 0 30px", fontSize: 11, color: COLORS.textMuted }}>{t.desc}</p>
+                  )}
                 </div>
               ))}
             </div>
           </div>
 
-          <Btn onClick={doExtract} icon={icons.extract} disabled={extracting || !selectedFile} style={{ width: "100%", justifyContent: "center" }}>
-            {extracting ? "Extracting..." : "Extract"}
-          </Btn>
+          {/* Page range — only for text */}
+          {extractType === "text" && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                Page range
+              </label>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                {[["all", "All pages"], ["range", "Custom range"]].map(([id, lbl]) => (
+                  <div key={id} onClick={() => setPageRange(id === "all" ? "all" : "")} style={{ flex: 1, background: (pageRange === "all") === (id === "all") ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${(pageRange === "all") === (id === "all") ? COLORS.accent : COLORS.border}`, borderRadius: 8, padding: "7px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: (pageRange === "all") === (id === "all") ? COLORS.accent : COLORS.text, textAlign: "center" }}>
+                    {lbl}
+                  </div>
+                ))}
+              </div>
+              {pageRange !== "all" && (
+                <input
+                  value={pageRange}
+                  onChange={e => setPageRange(e.target.value)}
+                  placeholder="e.g. 1-3, 5, 7-10"
+                  style={inputStyle}
+                />
+              )}
+            </div>
+          )}
+
+          {/* OCR note */}
+          {extractType === "ocr" && (
+            <div style={{ background: COLORS.goldSoft, border: `1px solid ${COLORS.gold}`, borderRadius: 9, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: COLORS.gold, lineHeight: 1.6 }}>
+              <b>OCR requires tesseract.js</b><br />
+              Run <code style={{ background: "rgba(0,0,0,0.1)", borderRadius: 4, padding: "1px 5px" }}>npm install tesseract.js</code> if you haven't already. OCR is slow — up to 5 pages at a time.
+            </div>
+          )}
+
+          {/* Extract button */}
+          {extracting ? (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+                <span>{progressMsg || "Processing…"}</span>
+                <span>{progress}%</span>
+              </div>
+              <div style={{ background: COLORS.surface, borderRadius: 100, height: 6, overflow: "hidden", marginBottom: 10 }}>
+                <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.3s" }} />
+              </div>
+              <div style={{ fontSize: 11, color: COLORS.textDim, textAlign: "center" }}>Please wait…</div>
+            </div>
+          ) : (
+            <Btn
+              onClick={doExtract}
+              icon={icons.extract}
+              disabled={!selectedFile}
+              style={{ width: "100%", justifyContent: "center" }}
+            >
+              Extract {types.find(t => t.id === extractType)?.label}
+            </Btn>
+          )}
         </div>
 
+        {/* ── Right: Results ── */}
         <div>
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px", minHeight: 360 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px", minHeight: 400 }}>
             {results ? (
               <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: COLORS.text }}>Extracted {types.find(t => t.id === extractType)?.label}</h3>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: results.error ? COLORS.error : COLORS.text }}>
+                      {results.error ? "⚠ Error" : `✓ ${types.find(t => t.id === results.type)?.label}`}
+                    </h3>
+                    {results.pages && (
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 3 }}>
+                        {results.pages} page(s) processed · {results.content.length.toLocaleString()} characters
+                      </div>
+                    )}
+                  </div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <Btn variant="secondary" small icon={icons.download} onClick={() => onToast("Downloaded!", "success")}>Download</Btn>
+                    <Btn
+                      variant="secondary"
+                      small
+                      icon={icons.download}
+                      onClick={() => downloadText(results.content, `${selectedFile?.name?.replace(".pdf","") || "extracted"}_${results.type}.txt`)}
+                    >
+                      Download .txt
+                    </Btn>
                     <Btn variant="ghost" small onClick={() => setResults(null)}>Clear</Btn>
                   </div>
                 </div>
-                <pre style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "16px", fontSize: 12, color: COLORS.text, lineHeight: 1.7, overflow: "auto", margin: 0, whiteSpace: "pre-wrap", fontFamily: "'Courier New', monospace" }}>
-                  {results}
+
+                {/* Result preview */}
+                <pre style={{
+                  background: COLORS.surface,
+                  border: `1px solid ${results.error ? COLORS.error : COLORS.border}`,
+                  borderRadius: 10, padding: "16px", fontSize: 12,
+                  color: results.error ? COLORS.error : COLORS.text,
+                  lineHeight: 1.7, overflow: "auto", margin: 0,
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "'Courier New', Consolas, monospace",
+                  maxHeight: 520,
+                }}>
+                  {results.content}
                 </pre>
+
+                {/* Word/character count */}
+                {!results.error && (
+                  <div style={{ display: "flex", gap: 20, marginTop: 12, fontSize: 11, color: COLORS.textDim }}>
+                    <span>📝 {results.content.split(/\s+/).filter(Boolean).length.toLocaleString()} words</span>
+                    <span>🔤 {results.content.length.toLocaleString()} characters</span>
+                    <span>📄 {results.content.split("\n").length.toLocaleString()} lines</span>
+                  </div>
+                )}
               </>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", minHeight: 300, color: COLORS.textDim, textAlign: "center" }}>
-                <Icon d={icons.extract} size={40} color={COLORS.textDim} />
-                <p style={{ margin: "16px 0 0", fontSize: 14 }}>Select a file and extraction type, then click Extract.</p>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", minHeight: 340, color: COLORS.textDim, textAlign: "center" }}>
+                <Icon d={icons.extract} size={44} color={COLORS.textDim} />
+                <p style={{ margin: "16px 0 6px", fontSize: 15, fontWeight: 600, color: COLORS.text }}>
+                  Ready to extract
+                </p>
+                <p style={{ margin: 0, fontSize: 13, maxWidth: 280, lineHeight: 1.6 }}>
+                  Select a file and extraction type on the left, then click Extract.
+                </p>
+                <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start", background: COLORS.surface, borderRadius: 10, padding: "14px 18px", fontSize: 12, color: COLORS.textMuted }}>
+                  <span>📄 <b style={{ color: COLORS.text }}>Text</b> — works on any searchable PDF</span>
+                  <span>ℹ <b style={{ color: COLORS.text }}>Metadata</b> — always available</span>
+                  <span>🔗 <b style={{ color: COLORS.text }}>Links</b> — finds all URLs</span>
+                  <span>🔍 <b style={{ color: COLORS.text }}>OCR</b> — for scanned / image PDFs</span>
+                </div>
               </div>
             )}
           </div>
