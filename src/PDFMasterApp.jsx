@@ -157,10 +157,21 @@ const Btn = ({ children, onClick, variant = "primary", icon, small, disabled, st
 const FileCard = ({ file, onView, onRemove, onDownload, selected, onSelect }) => {
   const [hovered, setHovered] = useState(false);
   const ext = file.name?.split(".").pop()?.toUpperCase() || "PDF";
-  const extColor = ext === "PDF" ? COLORS.accent : ext === "DOCX" ? "#60A5FA" : ext === "XLSX" ? COLORS.success : COLORS.gold;
+  const isPDF = ext === "PDF";
+  const extColor = isPDF ? COLORS.accent
+    : ext === "DOCX" || ext === "DOC"  ? "#60A5FA"
+    : ext === "XLSX" || ext === "XLS"  ? COLORS.success
+    : ext === "PPTX" || ext === "PPT"  ? "#FB923C"
+    : ext === "JPG"  || ext === "JPEG" || ext === "PNG" ? COLORS.teal
+    : COLORS.gold;
 
   const handleCardClick = () => {
-    // If a file has a raw object, open it in the viewer directly
+    if (!isPDF) {
+      // Non-PDF files can't be opened in the viewer
+      // Just select them for use in merge/convert panels
+      if (onSelect) onSelect();
+      return;
+    }
     if (onView && (file.raw || file.url)) {
       onView(file);
     } else if (onSelect) {
@@ -192,9 +203,14 @@ const FileCard = ({ file, onView, onRemove, onDownload, selected, onSelect }) =>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</div>
         <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
-          {file.size ? `${(file.size / 1024).toFixed(1)} KB` : "—"} · {file.pages || Math.floor(Math.random() * 40) + 1} pages
+          {file.size ? `${(file.size / 1024).toFixed(1)} KB` : "—"} · {file.pages && file.pages !== "—" ? `${file.pages} pages` : ext}
         </div>
-        <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 1 }}>{file.modified || "Just now"}</div>
+        <div style={{ fontSize: 11, marginTop: 2 }}>
+          {isPDF
+            ? <span style={{ color: COLORS.textDim }}>{file.modified || "Just now"}</span>
+            : <span style={{ color: COLORS.gold, fontWeight: 600 }}>⚠ Convert to PDF to view</span>
+          }
+        </div>
       </div>
       <div style={{ display: "flex", gap: 6, opacity: hovered ? 1 : 0, transition: "opacity 0.15s" }}>
         <button onClick={e => { e.stopPropagation(); onView?.(file); }} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted, cursor: "pointer", borderRadius: 7, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -3330,64 +3346,99 @@ export default function PDFMasterApp() {
 
   // Used by the global drop handler — defined before addFiles to avoid circular ref
   const addFilesGlobal = useCallback((rawFiles) => {
-    const mapped = rawFiles
-      .filter(f => f instanceof File)
-      .map(f => ({
-        name:     f.name,
-        size:     f.size,
-        pages:    "—",
-        modified: "Just now",
-        raw:      f,
-      }));
-    if (mapped.length === 0) return;
+    const PDF_TYPES   = ["application/pdf"];
+    const IMAGE_TYPES = ["image/jpeg","image/png","image/webp","image/gif","image/tiff"];
+    const OFFICE_TYPES = [
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+    ];
+
+    // Separate PDFs from other files
+    const pdfs   = rawFiles.filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
+    const images = rawFiles.filter(f => IMAGE_TYPES.includes(f.type) || /\.(jpg|jpeg|png|webp|gif|tiff?)$/i.test(f.name));
+    const office = rawFiles.filter(f => OFFICE_TYPES.includes(f.type) || /\.(docx?|xlsx?|pptx?)$/i.test(f.name));
+    const other  = rawFiles.filter(f => !pdfs.includes(f) && !images.includes(f) && !office.includes(f));
+
+    // Warn about office files
+    if (office.length > 0) {
+      const names = office.map(f => f.name).join(", ");
+      setToast({ msg: `"${names}" can't be opened in the viewer. Go to Convert → Images→PDF or use CloudConvert for Office files.`, type: "error" });
+      setTimeout(() => setToast(null), 6000);
+    }
+
+    // Add all valid files to workspace (PDFs + images + others)
+    const validFiles = [...pdfs, ...images, ...other].filter(f => f instanceof File);
+    if (validFiles.length === 0) return;
+
+    const mapped = validFiles.map(f => ({
+      name:     f.name,
+      size:     f.size,
+      pages:    "—",
+      modified: "Just now",
+      raw:      f,
+    }));
+
     setFiles(prev => {
       const existing = new Set(prev.map(x => x.name));
-      const fresh = mapped.filter(m => !existing.has(m.name));
+      const fresh    = mapped.filter(m => !existing.has(m.name));
       return [...prev, ...fresh];
     });
-    setToast({ msg: `${mapped.length} file(s) added to workspace`, type: "success" });
-    setTimeout(() => setToast(null), 3500);
-    // Auto-open single file in viewer
-    if (mapped.length === 1 && mapped[0].raw) {
+
+    if (office.length === 0) {
+      setToast({ msg: `${validFiles.length} file(s) added to workspace`, type: "success" });
+      setTimeout(() => setToast(null), 3500);
+    }
+
+    // Auto-open single PDF in viewer
+    if (pdfs.length === 1 && validFiles.length === 1) {
       setTimeout(() => setViewerFile(mapped[0]), 300);
     }
   }, []);
 
   const addFiles = useCallback((newFiles) => {
-    // newFiles can be File objects (from input/drop) or already-mapped objects (from CreateSection)
+    const OFFICE_EXTS = /\.(docx?|xlsx?|pptx?)$/i;
+
+    // newFiles can be File objects or already-mapped objects from CreateSection
     const mapped = newFiles.map(f => {
-      // Already a mapped object with a name property — came from CreateSection
-      if (f && typeof f === "object" && !(f instanceof File) && f.name && f.raw) {
-        return f;
-      }
-      // Raw File object from drag-and-drop or file input
+      // Already a mapped object with raw attached — from CreateSection
+      if (f && !(f instanceof File) && f.name && f.raw) return f;
+      // Raw File object
       if (f instanceof File) {
+        // Warn about office files trying to be added as viewable PDFs
+        if (OFFICE_EXTS.test(f.name)) {
+          showToast(`"${f.name}" is an Office file. Go to Convert to turn it into a PDF first.`, "error");
+          return null;
+        }
         return {
-          name: f.name,
-          size: f.size,
-          pages: "—",
+          name:     f.name,
+          size:     f.size,
+          pages:    "—",
           modified: "Just now",
-          raw: f,
+          raw:      f,
         };
       }
       return f;
-    });
+    }).filter(Boolean);
+
+    if (mapped.length === 0) return;
 
     setFiles(prev => {
-      // Avoid adding duplicates by name
       const existing = new Set(prev.map(x => x.name));
-      const fresh = mapped.filter(m => !existing.has(m.name));
+      const fresh    = mapped.filter(m => !existing.has(m.name));
       return [...prev, ...fresh];
     });
 
-    showToast(`${newFiles.length} file(s) added to workspace!`, "success");
+    // Only show success if we actually added something
+    const pdfsAdded = mapped.filter(m => m.name?.toLowerCase().endsWith(".pdf"));
+    if (pdfsAdded.length > 0) {
+      showToast(`${mapped.length} file(s) added to workspace!`, "success");
+    }
 
-    // Auto-open in viewer when a single PDF is uploaded or added
-    if (newFiles.length === 1) {
-      const entry = mapped[0];
-      if (entry && (entry.raw || entry.url)) {
-        setTimeout(() => setViewerFile(entry), 300);
-      }
+    // Auto-open single PDF in viewer
+    if (mapped.length === 1 && mapped[0]?.name?.toLowerCase().endsWith(".pdf") && mapped[0].raw) {
+      setTimeout(() => setViewerFile(mapped[0]), 300);
     }
   }, [showToast]);
 

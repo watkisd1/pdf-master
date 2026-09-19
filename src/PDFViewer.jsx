@@ -266,6 +266,26 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
 
     const load = async () => {
       try {
+        // Guard — only attempt to load actual PDF files
+        const name = file?.name?.toLowerCase() || "";
+        const isPDF = name.endsWith(".pdf") ||
+          (file?.raw instanceof File && file.raw.type === "application/pdf");
+
+        if (!isPDF) {
+          const ext = name.split(".").pop()?.toUpperCase() || "this file";
+          let hint = "";
+          if (/\.(xlsx?|docx?|pptx?)$/i.test(name)) {
+            hint = "Go to the Convert section to turn it into a PDF first, then open it here.";
+          } else if (/\.(jpg|jpeg|png|webp|gif)$/i.test(name)) {
+            hint = "Go to Convert → Images to PDF to turn it into a viewable PDF.";
+          } else {
+            hint = "Only PDF files can be opened in the viewer.";
+          }
+          setError(`Cannot open ${ext} file in the PDF viewer.\n\n${hint}`);
+          setLoading(false);
+          return;
+        }
+
         let source;
         if (file.raw instanceof File) {
           const buffer = await file.raw.arrayBuffer();
@@ -1208,8 +1228,16 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
           )}
           {error && (
             <div style={S.errorBox}>
-              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Failed to load PDF</div>
-              <div style={{ fontSize: 12, opacity: .8 }}>{error}</div>
+              <div style={{ fontSize: 22, marginBottom: 10 }}>⚠️</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
+                {error.includes("Cannot open") ? "Wrong file type" : "Failed to load PDF"}
+              </div>
+              {error.split("\n").filter(Boolean).map((line, i) => (
+                <div key={i} style={{ fontSize: 12, opacity: i === 0 ? 1 : 0.75, marginBottom: 4, lineHeight: 1.5 }}>{line}</div>
+              ))}
+              <button onClick={onClose} style={{ marginTop: 16, background: "#E84D4D", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}>
+                ← Go back
+              </button>
             </div>
           )}
 
