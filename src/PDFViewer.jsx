@@ -220,18 +220,29 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
   const [activeTab, setActiveTab]     = useState("thumbs");
 
   // ── Annotation state ─────────────────────────────────────────────────────────
-  const [annotations, setAnnotations]     = useState([]);    // all annotations across pages
+  const [annotations, setAnnotations]     = useState([]);
   const [annotColor, setAnnotColor]       = useState("#FFD700");
   const [annotDrawing, setAnnotDrawing]   = useState(false);
-  const [annotStart, setAnnotStart]       = useState(null);  // {x,y} for rect tools
-  const [annotCurrent, setAnnotCurrent]   = useState(null);  // live rect while dragging
-  const [pendingNote, setPendingNote]     = useState(null);  // {x,y} where note will drop
+  const [annotStart, setAnnotStart]       = useState(null);
+  const [annotCurrent, setAnnotCurrent]   = useState(null);
+  const [pendingNote, setPendingNote]     = useState(null);
   const [noteInputText, setNoteInputText] = useState("");
   const [savingAnnots, setSavingAnnots]   = useState(false);
   const [annotSaved, setAnnotSaved]       = useState(false);
-  const annotCanvasRef = useRef();        // overlay canvas on the page
+  const [symbolSize, setSymbolSize]       = useState(32); // size for check/cross/stamp
+  const annotCanvasRef = useRef();
   const annotLastPos   = useRef(null);
-  const annotPathRef   = useRef([]);      // current freehand path points
+  const annotPathRef   = useRef([]);
+
+  // ── Watermark state ──────────────────────────────────────────────────────────
+  const [showWatermarkPanel, setShowWatermarkPanel] = useState(false);
+  const [wmText, setWmText]             = useState("CONFIDENTIAL");
+  const [wmOpacity, setWmOpacity]       = useState(0.2);
+  const [wmAngle, setWmAngle]           = useState(45);
+  const [wmSize, setWmSize]             = useState(48);
+  const [wmColor, setWmColor]           = useState("#CC0000");
+  const [wmRepeat, setWmRepeat]         = useState(true);
+  const [applyingWm, setApplyingWm]     = useState(false);
 
   // ── Signature state ──────────────────────────────────────────────────────────
   const [showSignPanel, setShowSignPanel] = useState(false);
@@ -389,6 +400,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = a.color;
       ctx.fillRect(a.x, a.y, a.w, a.h);
+
     } else if (a.type === "underline") {
       ctx.globalAlpha = 0.9;
       ctx.strokeStyle = a.color;
@@ -397,6 +409,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       ctx.moveTo(a.x, a.y + a.h);
       ctx.lineTo(a.x + a.w, a.y + a.h);
       ctx.stroke();
+
     } else if (a.type === "strikethrough") {
       ctx.globalAlpha = 0.9;
       ctx.strokeStyle = a.color;
@@ -405,6 +418,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       ctx.moveTo(a.x, a.y + a.h / 2);
       ctx.lineTo(a.x + a.w, a.y + a.h / 2);
       ctx.stroke();
+
     } else if (a.type === "freehand") {
       if (!a.points || a.points.length < 2) return;
       ctx.globalAlpha = 0.85;
@@ -416,14 +430,84 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       ctx.moveTo(a.points[0].x, a.points[0].y);
       a.points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
       ctx.stroke();
+
     } else if (a.type === "note") {
-      // Draw sticky note icon
-      ctx.globalAlpha = 0.9;
-      ctx.fillStyle = a.color;
-      ctx.fillRect(a.x, a.y, 24, 24);
-      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      // Draggable sticky note — yellow card with shadow
+      const w = 130, h = 70, r = 6;
+      ctx.globalAlpha = 0.95;
+      // Shadow
+      ctx.shadowColor = "rgba(0,0,0,0.25)";
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = 2;
+      ctx.shadowOffsetY = 2;
+      // Note background
+      ctx.fillStyle = a.color || "#FFD700";
+      ctx.beginPath();
+      ctx.roundRect(a.x, a.y, w, h, r);
+      ctx.fill();
+      ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      // Header bar
+      ctx.fillStyle = "rgba(0,0,0,0.12)";
+      ctx.beginPath();
+      ctx.roundRect(a.x, a.y, w, 18, [r, r, 0, 0]);
+      ctx.fill();
+      // Icon
       ctx.font = "12px sans-serif";
-      ctx.fillText("📝", a.x + 2, a.y + 17);
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillText("📝", a.x + 4, a.y + 14);
+      // Note text
+      ctx.fillStyle = "#333";
+      ctx.font = "11px sans-serif";
+      const words = (a.text || "Note").split(" ");
+      let line = ""; let ly = a.y + 32;
+      words.forEach(word => {
+        const test = line + word + " ";
+        if (ctx.measureText(test).width > w - 10 && line) {
+          ctx.fillText(line, a.x + 5, ly);
+          line = word + " "; ly += 14;
+        } else { line = test; }
+      });
+      if (line && ly < a.y + h - 4) ctx.fillText(line, a.x + 5, ly);
+
+    } else if (a.type === "check") {
+      // Green checkmark
+      const s = a.size || 32;
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color || "#22C55E";
+      ctx.lineWidth = s * 0.12;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(a.x + s * 0.15, a.y + s * 0.5);
+      ctx.lineTo(a.x + s * 0.38, a.y + s * 0.75);
+      ctx.lineTo(a.x + s * 0.85, a.y + s * 0.2);
+      ctx.stroke();
+      // Circle background
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = a.color || "#22C55E";
+      ctx.beginPath();
+      ctx.arc(a.x + s / 2, a.y + s / 2, s / 2, 0, Math.PI * 2);
+      ctx.fill();
+
+    } else if (a.type === "cross") {
+      // Red X mark
+      const s = a.size || 32;
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color || "#EF4444";
+      ctx.lineWidth = s * 0.12;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(a.x + s * 0.2, a.y + s * 0.2);
+      ctx.lineTo(a.x + s * 0.8, a.y + s * 0.8);
+      ctx.moveTo(a.x + s * 0.8, a.y + s * 0.2);
+      ctx.lineTo(a.x + s * 0.2, a.y + s * 0.8);
+      ctx.stroke();
+      // Circle background
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = a.color || "#EF4444";
+      ctx.beginPath();
+      ctx.arc(a.x + s / 2, a.y + s / 2, s / 2, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
   };
@@ -450,7 +534,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
 
   // ── Annotation canvas mouse handlers ────────────────────────────────────────
   const onAnnotMouseDown = (e) => {
-    if (!["highlight", "underline", "strikethrough", "freehand", "note"].includes(activeTool)) return;
+    if (!["highlight","underline","strikethrough","freehand","note","eraser","check","cross"].includes(activeTool)) return;
     e.preventDefault();
     e.stopPropagation();
     const pos = getAnnotPos(e);
@@ -460,12 +544,60 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       setNoteInputText("");
       return;
     }
+
+    if (activeTool === "check" || activeTool === "cross") {
+      // Place symbol immediately on click
+      const newAnnot = {
+        id: Date.now(), type: activeTool,
+        x: pos.x - symbolSize / 2,
+        y: pos.y - symbolSize / 2,
+        size: symbolSize,
+        color: activeTool === "check" ? "#22C55E" : "#EF4444",
+        page: currentPage,
+      };
+      setAnnotations(prev => [...prev, newAnnot]);
+      return;
+    }
+
+    if (activeTool === "eraser") {
+      // Erase any annotation the user clicks on
+      const canvas = annotCanvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const sx = canvas.width  / rect.width;
+      const sy = canvas.height / rect.height;
+      setAnnotations(prev => prev.filter(a => {
+        if (a.page !== currentPage) return true;
+        // Check if click is within annotation bounds
+        if (a.type === "freehand") {
+          return !a.points?.some(p =>
+            Math.hypot(p.x - pos.x, p.y - pos.y) < 20
+          );
+        }
+        if (a.type === "check" || a.type === "cross") {
+          const s = a.size || 32;
+          return !(pos.x >= a.x && pos.x <= a.x + s &&
+                   pos.y >= a.y && pos.y <= a.y + s);
+        }
+        if (a.type === "note") {
+          return !(pos.x >= a.x && pos.x <= a.x + 130 &&
+                   pos.y >= a.y && pos.y <= a.y + 70);
+        }
+        // Rect-based annotations
+        const margin = 10;
+        return !(pos.x >= a.x - margin && pos.x <= a.x + (a.w || 0) + margin &&
+                 pos.y >= a.y - margin && pos.y <= a.y + (a.h || 20) + margin);
+      }));
+      return;
+    }
+
     if (activeTool === "freehand") {
       setAnnotDrawing(true);
       annotPathRef.current = [pos];
       annotLastPos.current = pos;
       return;
     }
+
     setAnnotDrawing(true);
     setAnnotStart(pos);
     setAnnotCurrent(pos);
@@ -594,6 +726,23 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
             });
           }
 
+        } else if (annot.type === "check" || annot.type === "cross") {
+          const s   = (annot.size || 32) * sx;
+          const pdfX = annot.x * sx;
+          const pdfY = pageH - annot.y * sy - s;
+          const hexC = (annot.color || (annot.type === "check" ? "#22C55E" : "#EF4444")).replace("#","");
+          const cr   = parseInt(hexC.slice(0,2),16)/255;
+          const cg   = parseInt(hexC.slice(2,4),16)/255;
+          const cb   = parseInt(hexC.slice(4,6),16)/255;
+          const c    = rgb(cr, cg, cb);
+          if (annot.type === "check") {
+            page.drawLine({ start: { x: pdfX + s*0.15, y: pdfY + s*0.25 }, end: { x: pdfX + s*0.38, y: pdfY + s*0.0 }, thickness: s*0.1, color: c, opacity: 0.9 });
+            page.drawLine({ start: { x: pdfX + s*0.38, y: pdfY + s*0.0 }, end: { x: pdfX + s*0.85, y: pdfY + s*0.55 }, thickness: s*0.1, color: c, opacity: 0.9 });
+          } else {
+            page.drawLine({ start: { x: pdfX + s*0.2, y: pdfY + s*0.2 }, end: { x: pdfX + s*0.8, y: pdfY + s*0.8 }, thickness: s*0.1, color: c, opacity: 0.9 });
+            page.drawLine({ start: { x: pdfX + s*0.8, y: pdfY + s*0.2 }, end: { x: pdfX + s*0.2, y: pdfY + s*0.8 }, thickness: s*0.1, color: c, opacity: 0.9 });
+          }
+
         } else if (annot.type === "note") {
           const { StandardFonts } = await import("pdf-lib");
           const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -634,6 +783,81 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       console.error(err);
       setSavingAnnots(false);
       alert(`Failed to save annotations: ${err.message}`);
+    }
+  };
+
+  // ── Apply custom watermark to all pages ─────────────────────────────────────
+  const applyWatermark = async () => {
+    if (!file?.raw) return;
+    setApplyingWm(true);
+    try {
+      const { PDFDocument, rgb, degrees } = await import("pdf-lib");
+      const { StandardFonts }             = await import("pdf-lib");
+      const buffer  = await file.raw.arrayBuffer();
+      const pdfDoc  = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const font    = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      // Parse hex color
+      const hex   = wmColor.replace("#", "");
+      const r     = parseInt(hex.slice(0,2),16)/255;
+      const g     = parseInt(hex.slice(2,4),16)/255;
+      const b     = parseInt(hex.slice(4,6),16)/255;
+      const color = rgb(r, g, b);
+
+      pdfDoc.getPages().forEach(page => {
+        const { width: pw, height: ph } = page.getSize();
+        const textW = font.widthOfTextAtSize(wmText, wmSize);
+
+        if (wmRepeat) {
+          // Tile watermark across the page
+          const spacingX = textW + 60;
+          const spacingY = wmSize + 60;
+          for (let x = -pw; x < pw * 2; x += spacingX) {
+            for (let y = -ph; y < ph * 2; y += spacingY) {
+              page.drawText(wmText, {
+                x, y, font, size: wmSize,
+                color, opacity: wmOpacity,
+                rotate: degrees(wmAngle),
+              });
+            }
+          }
+        } else {
+          // Single centered watermark
+          page.drawText(wmText, {
+            x: (pw - textW) / 2,
+            y: (ph - wmSize) / 2,
+            font, size: wmSize,
+            color, opacity: wmOpacity,
+            rotate: degrees(wmAngle),
+          });
+        }
+      });
+
+      const bytes    = await pdfDoc.save();
+      const fileName = file.name.replace(/\.pdf$/i,"") + "_watermarked.pdf";
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Reload viewer with watermarked PDF
+      if (onAddFiles) onAddFiles([rawFile]);
+      const reloaded = await pdfjsLib.getDocument({ data: await rawFile.arrayBuffer() }).promise;
+      setPdfDoc(reloaded);
+      setNumPages(reloaded.numPages);
+      file.name = fileName;
+      file.raw  = rawFile;
+
+      setApplyingWm(false);
+      setShowWatermarkPanel(false);
+    } catch (err) {
+      console.error(err);
+      setApplyingWm(false);
+      alert(`Watermark failed: ${err.message}`);
     }
   };
 
@@ -956,16 +1180,35 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         <button style={S.btn(activeTool === "underline")} onClick={() => setActiveTool(t => t === "underline" ? "none" : "underline")} title="Underline — drag to select area">
           <Ic path={ICO.underline} size={13} /> Underline
         </button>
-        <button style={S.btn(activeTool === "strikethrough")} onClick={() => setActiveTool(t => t === "strikethrough" ? "none" : "strikethrough")} title="Strikethrough — drag to select area">
+        <button style={S.btn(activeTool === "strikethrough")} onClick={() => setActiveTool(t => t === "strikethrough" ? "none" : "strikethrough")} title="Strikethrough">
           <Ic path={ICO.strike} size={13} /> Strike
         </button>
-        <button style={S.btn(activeTool === "freehand")} onClick={() => setActiveTool(t => t === "freehand" ? "none" : "freehand")} title="Freehand pen — draw freely">
+        <button style={S.btn(activeTool === "freehand")} onClick={() => setActiveTool(t => t === "freehand" ? "none" : "freehand")} title="Freehand pen">
           <Ic path={ICO.pen} size={13} /> Draw
         </button>
         <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }} title="Sticky note — click to place">
           <Ic path={ICO.note} size={13} /> Note
         </button>
-        {/* Annotation color picker */}
+        <button style={{ ...S.btn(activeTool === "check"), color: activeTool === "check" ? "#fff" : "#22C55E", background: activeTool === "check" ? "#22C55E" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "check" ? "none" : "check")} title="Check mark — click to place">
+          ✓ Check
+        </button>
+        <button style={{ ...S.btn(activeTool === "cross"), color: activeTool === "cross" ? "#fff" : "#EF4444", background: activeTool === "cross" ? "#EF4444" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "cross" ? "none" : "cross")} title="X mark — click to place">
+          ✕ Cross
+        </button>
+        <button style={{ ...S.btn(activeTool === "eraser"), color: activeTool === "eraser" ? "#fff" : "#FB923C", background: activeTool === "eraser" ? "#FB923C" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "eraser" ? "none" : "eraser")} title="Eraser — click annotation to remove">
+          <Ic path={ICO.eraser} size={13} /> Erase
+        </button>
+
+        {/* Symbol size for check/cross */}
+        {["check","cross"].includes(activeTool) && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "0 4px", borderLeft: "1px solid #2A2F4A", paddingLeft: 10 }}>
+            <span style={{ fontSize: 10, color: "#7B8099" }}>Size</span>
+            <input type="range" min={16} max={64} value={symbolSize} onChange={e => setSymbolSize(parseInt(e.target.value))} style={{ width: 60 }} />
+            <span style={{ fontSize: 10, color: "#E8E9F0", minWidth: 20 }}>{symbolSize}</span>
+          </div>
+        )}
+
+        {/* Color picker for annotation tools */}
         {["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && (
           <div style={{ display: "flex", gap: 5, alignItems: "center", padding: "0 4px", borderLeft: "1px solid #2A2F4A", paddingLeft: 10 }}>
             {["#FFD700","#FF6B6B","#4ECDC4","#A78BFA","#34D399","#FB923C"].map(c => (
@@ -973,10 +1216,16 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
             ))}
           </div>
         )}
+
+        {/* Watermark button */}
+        <button style={{ ...S.btn(showWatermarkPanel), background: showWatermarkPanel ? "#7C3AED" : S.btn(false).background, color: showWatermarkPanel ? "#fff" : "#A78BFA" }} onClick={() => setShowWatermarkPanel(v => !v)} title="Add watermark to all pages">
+          🔏 Watermark
+        </button>
+
         {annotations.filter(a => a.page === currentPage).length > 0 && (
           <>
             <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
-            <button style={{ ...S.btn(false), background: savingAnnots ? "#22263A" : "#E84D4D", color: "#fff", border: "none" }} onClick={saveAnnotations} disabled={savingAnnots} title="Save annotations permanently into the PDF">
+            <button style={{ ...S.btn(false), background: savingAnnots ? "#22263A" : "#E84D4D", color: "#fff", border: "none" }} onClick={saveAnnotations} disabled={savingAnnots} title="Save annotations permanently into PDF">
               <Ic path={ICO.save} size={13} /> {savingAnnots ? "Saving…" : `Save (${annotations.filter(a => a.page === currentPage).length})`}
             </button>
             <button style={{ ...S.btn(false), fontSize: 11 }} onClick={() => setAnnotations([])} title="Clear all annotations">
@@ -998,6 +1247,59 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       </div>
 
       <div style={S.body}>
+
+        {/* ── Sign success banner ── */}
+        {signSuccess && (
+
+        {/* ── Watermark panel ── */}
+        {showWatermarkPanel && (
+          <div style={{ position: "absolute", top: 52, left: 0, right: 0, zIndex: 200, background: "#13151F", borderBottom: "2px solid #7C3AED", padding: "16px 20px", display: "flex", gap: 20, alignItems: "flex-end", boxShadow: "0 4px 20px rgba(0,0,0,0.5)", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#A78BFA", letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 10 }}>🔏 Custom Watermark — applied to all pages</div>
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Text</label>
+                  <input value={wmText} onChange={e => setWmText(e.target.value)} style={{ background: "#22263A", border: "1px solid #2A2F4A", borderRadius: 7, padding: "6px 10px", color: "#E8E9F0", fontSize: 13, outline: "none", fontFamily: "inherit", width: 160 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Opacity {Math.round(wmOpacity * 100)}%</label>
+                  <input type="range" min={5} max={80} value={Math.round(wmOpacity * 100)} onChange={e => setWmOpacity(parseInt(e.target.value) / 100)} style={{ width: 90 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Angle {wmAngle}°</label>
+                  <input type="range" min={-90} max={90} value={wmAngle} onChange={e => setWmAngle(parseInt(e.target.value))} style={{ width: 90 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Size {wmSize}pt</label>
+                  <input type="range" min={12} max={120} value={wmSize} onChange={e => setWmSize(parseInt(e.target.value))} style={{ width: 90 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Color</label>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {["#CC0000","#0044CC","#006600","#7C3AED","#111111","#888888"].map(c => (
+                      <div key={c} onClick={() => setWmColor(c)} style={{ width: 20, height: 20, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${wmColor === c ? "#fff" : "transparent"}` }} />
+                    ))}
+                    <input type="color" value={wmColor} onChange={e => setWmColor(e.target.value)} style={{ width: 20, height: 20, border: "none", background: "none", cursor: "pointer", padding: 0 }} title="Custom color" />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Pattern</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[["Repeat", true],["Single", false]].map(([lbl, val]) => (
+                      <button key={lbl} onClick={() => setWmRepeat(val)} style={{ background: wmRepeat === val ? "#7C3AED" : "#22263A", color: wmRepeat === val ? "#fff" : "#7B8099", border: `1px solid ${wmRepeat === val ? "#7C3AED" : "#2A2F4A"}`, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}>{lbl}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={applyWatermark} disabled={!wmText.trim() || applyingWm} style={{ background: wmText.trim() && !applyingWm ? "#7C3AED" : "#22263A", color: wmText.trim() && !applyingWm ? "#fff" : "#4A5070", border: "none", borderRadius: 8, padding: "8px 16px", cursor: wmText.trim() && !applyingWm ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>
+                    {applyingWm ? "Applying…" : "Apply Watermark"}
+                  </button>
+                  <button onClick={() => setShowWatermarkPanel(false)} style={{ background: "transparent", border: "1px solid #2A2F4A", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontSize: 12, color: "#7B8099", fontFamily: "inherit" }}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Sign success banner ── */}
         {signSuccess && (
@@ -1250,7 +1552,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
               <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale} />
 
               {/* ── Annotation overlay canvas ── */}
-              {["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && (
+              {["highlight","underline","strikethrough","freehand","note","eraser","check","cross"].includes(activeTool) && (
                 <canvas
                   ref={annotCanvasRef}
                   onMouseDown={onAnnotMouseDown}
@@ -1262,17 +1564,19 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
                   onTouchEnd={onAnnotMouseUp}
                   style={{
                     position: "absolute", inset: 0,
-                    cursor: activeTool === "freehand" ? "crosshair"
-                          : activeTool === "note"     ? "cell"
+                    cursor: activeTool === "freehand"  ? "crosshair"
+                          : activeTool === "note"      ? "cell"
+                          : activeTool === "eraser"    ? "cell"
+                          : activeTool === "check"     ? "crosshair"
+                          : activeTool === "cross"     ? "crosshair"
                           : "text",
-                    zIndex: 10,
-                    touchAction: "none",
+                    zIndex: 10, touchAction: "none",
                   }}
                 />
               )}
 
               {/* ── Read-only annotation overlay when no tool selected ── */}
-              {!["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && annotations.some(a => a.page === currentPage) && (
+              {!["highlight","underline","strikethrough","freehand","note","eraser","check","cross"].includes(activeTool) && annotations.some(a => a.page === currentPage) && (
                 <canvas
                   ref={annotCanvasRef}
                   style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 10 }}

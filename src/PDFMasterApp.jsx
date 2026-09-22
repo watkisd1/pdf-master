@@ -3665,97 +3665,527 @@ const SearchSection = ({ files, onToast, onView }) => {
 
 // ─── Section: Export & Cloud ──────────────────────────────────────────────────
 const ExportSection = ({ files, onToast }) => {
-  const clouds = [
-    { name: "Google Drive", icon: "🟡", color: "#4285F4", connected: false },
-    { name: "Dropbox", icon: "📦", color: "#0061FF", connected: true },
-    { name: "OneDrive", icon: "☁️", color: "#0078D4", connected: false },
-  ];
+  // ── Cloud connection state ───────────────────────────────────────────────────
+  const [clouds, setClouds] = useState({
+    gdrive:   { name: "Google Drive",  icon: "\uD83D\uDFE1", color: "#4285F4", connected: false, token: null, uploading: false },
+    dropbox:  { name: "Dropbox",       icon: "\uD83D\uDCE6", color: "#0061FF", connected: false, token: null, uploading: false },
+    onedrive: { name: "OneDrive",      icon: "\u2601\uFE0F",  color: "#0078D4", connected: false, token: null, uploading: false },
+  });
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [uploadResults, setUploadResults] = useState([]);
+
+  const pdfFiles = files.filter(f => f.name?.toLowerCase().endsWith(".pdf"));
+
+  // ── Config — users fill these in with their own API credentials ─────────────
+  // Instructions shown in the UI below
+  const CONFIG = {
+    gdrive: {
+      clientId:    "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+      scope:       "https://www.googleapis.com/auth/drive.file",
+      discoveryDoc:"https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+    },
+    dropbox: {
+      clientId:    "YOUR_DROPBOX_APP_KEY",
+      redirectUri: window.location.origin + window.location.pathname,
+    },
+    onedrive: {
+      clientId:    "YOUR_AZURE_CLIENT_ID",
+      tenantId:    "common",
+      scope:       "Files.ReadWrite openid profile",
+      redirectUri: window.location.origin + window.location.pathname,
+    },
+  };
+
+  const toggleFile = (f) =>
+    setSelectedFiles(s => s.includes(f) ? s.filter(x => x !== f) : [...s, f]);
+
+  // ── Download helper (always works) ──────────────────────────────────────────
+  const downloadFile = (file) => {
+    if (!file.raw) { onToast("No file data to download.", "error"); return; }
+    const url = URL.createObjectURL(file.raw);
+    const a   = document.createElement("a");
+    a.href = url; a.download = file.name; a.click();
+    URL.revokeObjectURL(url);
+    onToast(`\u2713 "${file.name}" downloaded!`, "success");
+  };
+
+  const downloadAll = () => {
+    const toDownload = selectedFiles.length > 0 ? selectedFiles : pdfFiles;
+    if (toDownload.length === 0) { onToast("No files to download.", "error"); return; }
+    toDownload.forEach((f, i) => setTimeout(() => downloadFile(f), i * 150));
+  };
+
+  // ── Google Drive OAuth + Upload ──────────────────────────────────────────────
+  const connectGDrive = () => {
+    const cfg = CONFIG.gdrive;
+    if (cfg.clientId.startsWith("YOUR_")) {
+      showSetupGuide("gdrive"); return;
+    }
+    // Load Google Identity Services
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.onload = () => {
+      window.google.accounts.oauth2.initTokenClient({
+        client_id: cfg.clientId,
+        scope:     cfg.scope,
+        callback:  (resp) => {
+          if (resp.access_token) {
+            setClouds(c => ({ ...c, gdrive: { ...c.gdrive, connected: true, token: resp.access_token } }));
+            onToast("\u2713 Connected to Google Drive!", "success");
+          }
+        },
+      }).requestAccessToken();
+    };
+    document.head.appendChild(script);
+  };
+
+  const uploadToGDrive = async (file) => {
+    const token = clouds.gdrive.token;
+    if (!token || !file.raw) return false;
+    setClouds(c => ({ ...c, gdrive: { ...c.gdrive, uploading: true } }));
+    try {
+      const meta = JSON.stringify({ name: file.name, mimeType: "application/pdf" });
+      const form = new FormData();
+      form.append("metadata", new Blob([meta], { type: "application/json" }));
+      form.append("file", file.raw);
+      const res = await fetch(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setClouds(c => ({ ...c, gdrive: { ...c.gdrive, uploading: false } }));
+      return { name: file.name, link: `https://drive.google.com/file/d/${data.id}/view` };
+    } catch (err) {
+      setClouds(c => ({ ...c, gdrive: { ...c.gdrive, uploading: false } }));
+      throw err;
+    }
+  };
+
+  // ── Dropbox OAuth + Upload ───────────────────────────────────────────────────
+  const connectDropbox = () => {
+    const cfg = CONFIG.dropbox;
+    if (cfg.clientId.startsWith("YOUR_")) {
+      showSetupGuide("dropbox"); return;
+    }
+    const authUrl = `https://www.dropbox.com/oauth2/authorize` +
+      `?client_id=${cfg.clientId}` +
+      `&response_type=token` +
+      `&redirect_uri=${encodeURIComponent(cfg.redirectUri)}`;
+    // Open OAuth popup
+    const popup = window.open(authUrl, "dropbox-auth", "width=600,height=700");
+    // Listen for redirect with token in hash
+    const timer = setInterval(() => {
+      try {
+        const hash = popup?.location?.hash;
+        if (hash && hash.includes("access_token")) {
+          clearInterval(timer);
+          popup.close();
+          const params = new URLSearchParams(hash.slice(1));
+          const token  = params.get("access_token");
+          if (token) {
+            setClouds(c => ({ ...c, dropbox: { ...c.dropbox, connected: true, token } }));
+            onToast("\u2713 Connected to Dropbox!", "success");
+          }
+        }
+      } catch { /* cross-origin — keep waiting */ }
+    }, 500);
+  };
+
+  const uploadToDropbox = async (file) => {
+    const token = clouds.dropbox.token;
+    if (!token || !file.raw) return false;
+    setClouds(c => ({ ...c, dropbox: { ...c.dropbox, uploading: true } }));
+    try {
+      const res = await fetch("https://content.dropboxapi.com/2/files/upload", {
+        method:  "POST",
+        headers: {
+          "Authorization":   `Bearer ${token}`,
+          "Content-Type":    "application/octet-stream",
+          "Dropbox-API-Arg": JSON.stringify({
+            path: `/${file.name}`,
+            mode: "overwrite",
+            autorename: true,
+          }),
+        },
+        body: file.raw,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setClouds(c => ({ ...c, dropbox: { ...c.dropbox, uploading: false } }));
+      return { name: file.name, link: `https://www.dropbox.com/home${data.path_display}` };
+    } catch (err) {
+      setClouds(c => ({ ...c, dropbox: { ...c.dropbox, uploading: false } }));
+      throw err;
+    }
+  };
+
+  // ── OneDrive OAuth + Upload ──────────────────────────────────────────────────
+  const connectOneDrive = () => {
+    const cfg = CONFIG.onedrive;
+    if (cfg.clientId.startsWith("YOUR_")) {
+      showSetupGuide("onedrive"); return;
+    }
+    const authUrl = `https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/authorize` +
+      `?client_id=${cfg.clientId}` +
+      `&response_type=token` +
+      `&scope=${encodeURIComponent(cfg.scope)}` +
+      `&redirect_uri=${encodeURIComponent(cfg.redirectUri)}`;
+    const popup = window.open(authUrl, "onedrive-auth", "width=600,height=700");
+    const timer = setInterval(() => {
+      try {
+        const hash = popup?.location?.hash;
+        if (hash && hash.includes("access_token")) {
+          clearInterval(timer);
+          popup.close();
+          const params = new URLSearchParams(hash.slice(1));
+          const token  = params.get("access_token");
+          if (token) {
+            setClouds(c => ({ ...c, onedrive: { ...c.onedrive, connected: true, token } }));
+            onToast("\u2713 Connected to OneDrive!", "success");
+          }
+        }
+      } catch { /* cross-origin */ }
+    }, 500);
+  };
+
+  const uploadToOneDrive = async (file) => {
+    const token = clouds.onedrive.token;
+    if (!token || !file.raw) return false;
+    setClouds(c => ({ ...c, onedrive: { ...c.onedrive, uploading: true } }));
+    try {
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(file.name)}:/content`,
+        {
+          method:  "PUT",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type":  "application/pdf",
+          },
+          body: file.raw,
+        }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setClouds(c => ({ ...c, onedrive: { ...c.onedrive, uploading: false } }));
+      return { name: file.name, link: data.webUrl };
+    } catch (err) {
+      setClouds(c => ({ ...c, onedrive: { ...c.onedrive, uploading: false } }));
+      throw err;
+    }
+  };
+
+  // ── Upload selected files to a cloud service ─────────────────────────────────
+  const uploadToCloud = async (service) => {
+    const toUpload = selectedFiles.length > 0 ? selectedFiles : pdfFiles;
+    if (toUpload.length === 0) { onToast("Select files to upload.", "error"); return; }
+    const uploaders = { gdrive: uploadToGDrive, dropbox: uploadToDropbox, onedrive: uploadToOneDrive };
+    const uploader  = uploaders[service];
+    const cloudName = clouds[service].name;
+    const results   = [];
+    let   errors    = 0;
+
+    for (const file of toUpload) {
+      try {
+        onToast(`Uploading "${file.name}" to ${cloudName}…`, "");
+        const result = await uploader(file);
+        if (result) results.push(result);
+      } catch (err) {
+        errors++;
+        console.error(err);
+      }
+    }
+
+    if (results.length > 0) {
+      setUploadResults(prev => [...results, ...prev]);
+      onToast(`\u2713 ${results.length} file(s) uploaded to ${cloudName}!`, "success");
+    }
+    if (errors > 0) {
+      onToast(`${errors} file(s) failed to upload. Check your connection.`, "error");
+    }
+  };
+
+  // ── Setup guide modal state ──────────────────────────────────────────────────
+  const [setupGuide, setSetupGuide] = useState(null);
+  const showSetupGuide = (service) => setSetupGuide(service);
+
+  const setupSteps = {
+    gdrive: {
+      title: "Connect Google Drive",
+      color: "#4285F4",
+      steps: [
+        "Go to console.cloud.google.com and create a new project",
+        "Enable the Google Drive API under APIs & Services → Library",
+        "Go to APIs & Services → Credentials → Create OAuth 2.0 Client ID",
+        "Set Application Type to 'Web application'",
+        `Add ${window.location.origin} to Authorized JavaScript Origins`,
+        "Copy your Client ID",
+        `Open src/PDFMasterApp.jsx, find CONFIG.gdrive.clientId and replace "YOUR_GOOGLE_CLIENT_ID..." with your Client ID`,
+        "Save the file, run npm start, then click Connect again",
+      ],
+    },
+    dropbox: {
+      title: "Connect Dropbox",
+      color: "#0061FF",
+      steps: [
+        "Go to dropbox.com/developers and click Create app",
+        "Choose Scoped access → Full Dropbox → give it a name",
+        "On the app settings page, go to the Permissions tab",
+        "Enable files.content.write and files.content.read",
+        `Under OAuth 2 → Redirect URIs, add: ${window.location.origin + window.location.pathname}`,
+        "Copy your App key from the Settings tab",
+        `Open src/PDFMasterApp.jsx, find CONFIG.dropbox.clientId and replace "YOUR_DROPBOX_APP_KEY" with your App key`,
+        "Save the file, run npm start, then click Connect again",
+      ],
+    },
+    onedrive: {
+      title: "Connect OneDrive",
+      color: "#0078D4",
+      steps: [
+        "Go to portal.azure.com and sign in with your Microsoft account",
+        "Go to Azure Active Directory → App registrations → New registration",
+        "Set a name, choose 'Accounts in any organizational directory and personal Microsoft accounts'",
+        `Set Redirect URI to: ${window.location.origin + window.location.pathname}`,
+        "Go to API permissions → Add a permission → Microsoft Graph → Delegated → Files.ReadWrite",
+        "Copy your Application (client) ID from the Overview page",
+        `Open src/PDFMasterApp.jsx, find CONFIG.onedrive.clientId and replace "YOUR_AZURE_CLIENT_ID" with your Client ID`,
+        "Save the file, run npm start, then click Connect again",
+      ],
+    },
+  };
+
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "8px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+  };
+
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Export & Cloud Storage</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 8px", letterSpacing: "-0.3px" }}>
+        Export & Cloud Storage
+      </h2>
+      <p style={{ fontSize: 13, color: COLORS.textMuted, margin: "0 0 24px" }}>
+        Download files to your device or upload directly to cloud storage.
+      </p>
+
+      {/* Setup guide modal */}
+      {setupGuide && setupSteps[setupGuide] && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }} onClick={() => setSetupGuide(null)}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, width: 560, maxWidth: "95vw", maxHeight: "85vh", overflow: "auto", padding: 28, boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: setupSteps[setupGuide].color }}>
+                {setupSteps[setupGuide].title} — Setup Guide
+              </h3>
+              <button onClick={() => setSetupGuide(null)} style={{ background: COLORS.surface3, border: "none", color: COLORS.textMuted, cursor: "pointer", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit", fontSize: 16 }}>✕</button>
+            </div>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 18px", lineHeight: 1.6 }}>
+              Cloud integrations require you to register a free developer app with each service. This is a one-time setup that takes about 5 minutes. Your credentials are only stored locally in your code.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {setupSteps[setupGuide].steps.map((step, i) => (
+                <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: setupSteps[setupGuide].color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                  <div style={{ fontSize: 13, color: COLORS.text, lineHeight: 1.6, flex: 1 }}>{step}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 20, background: COLORS.surface, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+              💡 Once your Client ID is in the code and the app is restarted, the Connect button will open an official OAuth login popup from {setupSteps[setupGuide].title.split(" ")[1]}. No passwords are stored in PDF Master.
+            </div>
+            <button onClick={() => setSetupGuide(null)} style={{ marginTop: 16, background: setupSteps[setupGuide].color, color: "#fff", border: "none", borderRadius: 9, padding: "10px 24px", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", width: "100%" }}>
+              Got it — I'll set it up
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+
+        {/* ── Left: File selection + download ── */}
         <div>
-          <h3 style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Export Files</h3>
-          {files.length === 0 ? (
-            <div style={{ background: COLORS.surface2, border: `1px dashed ${COLORS.border}`, borderRadius: 12, padding: "30px", textAlign: "center", color: COLORS.textDim, fontSize: 13 }}>No files to export</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {files.map((f, i) => (
-                <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 14 }}>
-                  <Icon d={icons.file} size={18} color={COLORS.accent} />
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</span>
-                  <Btn variant="secondary" small icon={icons.download} onClick={() => onToast(`Downloading "${f.name}"...`, "success")}>Download</Btn>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>
+              Select files to export
+            </h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 14px" }}>
+              Check files below then download or upload to cloud. Leave all unchecked to export all files.
+            </p>
+
+            {pdfFiles.length === 0 ? (
+              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "20px", background: COLORS.surface, borderRadius: 8, border: `1px dashed ${COLORS.border}`, textAlign: "center" }}>
+                No PDF files in workspace yet
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                {pdfFiles.map((f, i) => (
+                  <div key={i} onClick={() => toggleFile(f)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: selectedFiles.includes(f) ? COLORS.accentSoft : COLORS.surface, border: `1.5px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 9, cursor: "pointer", transition: "all 0.12s" }}>
+                    <div style={{ width: 18, height: 18, border: `2px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 4, background: selectedFiles.includes(f) ? COLORS.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {selectedFiles.includes(f) && <Icon d={icons.check} size={11} color={COLORS.white} />}
+                    </div>
+                    <Icon d={icons.file} size={15} color={COLORS.accent} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted }}>{typeof f.size === "number" ? `${(f.size / 1024).toFixed(1)} KB` : f.size || "—"}</div>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); downloadFile(f); }}
+                      style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 11, color: COLORS.textMuted, fontFamily: "inherit", flexShrink: 0 }}
+                    >
+                      ↓
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {pdfFiles.length > 0 && (
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <Btn onClick={downloadAll} icon={icons.download} variant="secondary" style={{ flex: 1, justifyContent: "center" }}>
+                  {selectedFiles.length > 0
+                    ? `Download ${selectedFiles.length} selected`
+                    : `Download all (${pdfFiles.length})`}
+                </Btn>
+                {selectedFiles.length > 0 && (
+                  <Btn variant="ghost" small onClick={() => setSelectedFiles([])}>Clear</Btn>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Upload results */}
+          {uploadResults.length > 0 && (
+            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 10 }}>
+                Recently uploaded
+              </div>
+              {uploadResults.slice(0, 8).map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: i < uploadResults.length - 1 ? `1px solid ${COLORS.border}` : "none" }}>
+                  <span style={{ color: COLORS.success, fontSize: 13 }}>✓</span>
+                  <span style={{ flex: 1, fontSize: 12, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+                  {r.link && (
+                    <a href={r.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: COLORS.accent, fontWeight: 700, textDecoration: "none", flexShrink: 0 }}>
+                      Open ↗
+                    </a>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
 
+        {/* ── Right: Cloud storage ── */}
         <div>
-          <h3 style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Cloud Storage</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {clouds.map((c, i) => (
-              <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px", display: "flex", alignItems: "center", gap: 14 }}>
-                <span style={{ fontSize: 24 }}>{c.icon}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{c.name}</div>
-                  <div style={{ fontSize: 11, color: c.connected ? COLORS.success : COLORS.textDim }}>{c.connected ? "✓ Connected" : "Not connected"}</div>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Cloud storage</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 16px" }}>
+              Connect your cloud account to upload PDFs directly. First time requires a one-time developer app setup.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {Object.entries(clouds).map(([key, cloud]) => (
+                <div key={key} style={{ background: COLORS.surface, border: `1.5px solid ${cloud.connected ? cloud.color + "60" : COLORS.border}`, borderRadius: 12, padding: "14px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 22, flexShrink: 0 }}>{cloud.icon}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{cloud.name}</div>
+                      <div style={{ fontSize: 11, marginTop: 2 }}>
+                        {cloud.connected
+                          ? <span style={{ color: COLORS.success, fontWeight: 600 }}>✓ Connected</span>
+                          : <span style={{ color: COLORS.textDim }}>Not connected — click Setup to get started</span>}
+                      </div>
+                    </div>
+                    {cloud.connected ? (
+                      <button
+                        onClick={() => setClouds(c => ({ ...c, [key]: { ...c[key], connected: false, token: null } }))}
+                        style={{ background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, color: COLORS.textMuted, fontFamily: "inherit" }}
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => showSetupGuide(key)}
+                          style={{ background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, color: COLORS.textMuted, fontFamily: "inherit" }}
+                        >
+                          Setup
+                        </button>
+                        <button
+                          onClick={() => {
+                            const connectors = { gdrive: connectGDrive, dropbox: connectDropbox, onedrive: connectOneDrive };
+                            connectors[key]();
+                          }}
+                          style={{ background: cloud.color, color: "#fff", border: "none", borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}
+                        >
+                          Connect
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Upload button when connected */}
+                  {cloud.connected && (
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${COLORS.border}` }}>
+                      <button
+                        onClick={() => uploadToCloud(key)}
+                        disabled={cloud.uploading}
+                        style={{
+                          width: "100%", background: cloud.uploading ? COLORS.surface3 : cloud.color + "20",
+                          color: cloud.uploading ? COLORS.textMuted : cloud.color,
+                          border: `1px solid ${cloud.color}50`,
+                          borderRadius: 8, padding: "8px 0", cursor: cloud.uploading ? "not-allowed" : "pointer",
+                          fontSize: 12, fontWeight: 700, fontFamily: "inherit", transition: "all 0.12s",
+                        }}
+                      >
+                        {cloud.uploading
+                          ? "Uploading\u2026"
+                          : selectedFiles.length > 0
+                            ? `Upload ${selectedFiles.length} selected file(s) to ${cloud.name}`
+                            : `Upload all ${pdfFiles.length} file(s) to ${cloud.name}`}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <Btn variant={c.connected ? "secondary" : "primary"} small onClick={() => onToast(c.connected ? `Disconnected from ${c.name}` : `Connected to ${c.name}!`, "success")}>
-                  {c.connected ? "Disconnect" : "Connect"}
-                </Btn>
+              ))}
+            </div>
+          </div>
+
+          {/* Print settings */}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px" }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>
+              <Icon d={icons.print} size={15} color={COLORS.textMuted} /> Print
+            </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Page range</label>
+                <input type="text" placeholder="All pages" style={inputStyle} />
               </div>
-            ))}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Copies</label>
+                <input type="number" defaultValue={1} min={1} style={inputStyle} />
+              </div>
+            </div>
+            <Btn
+              variant="secondary"
+              icon={icons.print}
+              style={{ width: "100%", justifyContent: "center" }}
+              onClick={() => {
+                const toPrint = selectedFiles.length > 0 ? selectedFiles[0] : pdfFiles[0];
+                if (!toPrint?.raw) { onToast("Select a file to print.", "error"); return; }
+                const url = URL.createObjectURL(toPrint.raw);
+                const win = window.open(url);
+                win?.addEventListener("load", () => { win.print(); URL.revokeObjectURL(url); });
+              }}
+            >
+              Print {selectedFiles.length === 1 ? `"${selectedFiles[0].name}"` : "selected file"}
+            </Btn>
           </div>
         </div>
       </div>
     </div>
   );
 };
-
-// ─── Section: View Files ──────────────────────────────────────────────────────
-const ViewSection = ({ files, onAddFiles, onView, onRemove }) => (
-  <div>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: 0, letterSpacing: "-0.3px" }}>File Manager</h2>
-      <Btn icon={icons.upload} onClick={() => document.getElementById("main-file-input")?.click()}>Upload Files</Btn>
-    </div>
-    <DropZone onFiles={onAddFiles} label="Drop a PDF here or click to upload — it will open automatically" />
-    <div style={{ marginTop: 20 }}>
-      {files.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.textDim }}>
-          <Icon d={icons.file} size={48} color={COLORS.textDim} />
-          <p style={{ margin: "16px 0 0", fontSize: 14 }}>No files yet. Upload a PDF to get started.</p>
-          <p style={{ margin: "8px 0 0", fontSize: 12, color: COLORS.textDim }}>Drag and drop a file above or click Upload Files</p>
-        </div>
-      ) : (
-        <>
-          <p style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>
-            Click any file to open it in the viewer
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {files.map((f, i) => (
-              <FileCard
-                key={i}
-                file={f}
-                onView={onView}
-                onRemove={() => onRemove(f)}
-                onDownload={() => {
-                  if (f.raw) {
-                    const url = URL.createObjectURL(f.raw);
-                    const a = document.createElement("a");
-                    a.href = url; a.download = f.name; a.click();
-                    URL.revokeObjectURL(url);
-                  }
-                }}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  </div>
-);
 
 // ─── Main Application ─────────────────────────────────────────────────────────
 export default function PDFMasterApp() {
