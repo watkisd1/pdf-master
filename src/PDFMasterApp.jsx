@@ -520,6 +520,30 @@ const DashboardSection = ({ files, onModule, onView }) => {
   );
 };
 
+// ─── Shared form components — defined OUTSIDE section components so they
+//     don't get recreated on every render (which would drop input focus) ────────
+const SectionInput = ({ label, value, onChange, placeholder, type = "text" }) => (
+  <div style={{ marginBottom: 16 }}>
+    <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>{label}</label>
+    <input
+      type={type}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }}
+    />
+  </div>
+);
+
+const SectionToggle = ({ label, checked, onChange }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+    <span style={{ fontSize: 13, color: COLORS.text }}>{label}</span>
+    <div onClick={() => onChange(!checked)} style={{ width: 40, height: 22, background: checked ? COLORS.accent : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${checked ? COLORS.accent : COLORS.border}` }}>
+      <div style={{ width: 16, height: 16, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: checked ? 20 : 2, transition: "left 0.2s" }} />
+    </div>
+  </div>
+);
+
 // ─── Section: Create PDF ──────────────────────────────────────────────────────
 const CreateSection = ({ onToast, onAddFiles, onView }) => {
   const [title, setTitle] = useState("");
@@ -708,23 +732,6 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
     }
   };
 
-  const Input = ({ label, value, onChange, placeholder, type = "text" }) => (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-    </div>
-  );
-
-  const Toggle = ({ label, checked, onChange }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-      <span style={{ fontSize: 13, color: COLORS.text }}>{label}</span>
-      <div onClick={() => onChange(!checked)} style={{ width: 40, height: 22, background: checked ? COLORS.accent : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${checked ? COLORS.accent : COLORS.border}` }}>
-        <div style={{ width: 16, height: 16, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: checked ? 20 : 2, transition: "left 0.2s" }} />
-      </div>
-    </div>
-  );
-
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24 }}>
       {/* Main form */}
@@ -743,8 +750,27 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
           </div>
         </div>
 
-        <Input label="DOCUMENT TITLE" value={title} onChange={setTitle} placeholder="Enter document title..." />
-        <Input label="AUTHOR" value={author} onChange={setAuthor} placeholder="Your name..." />
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>DOCUMENT TITLE</label>
+          <input
+            type="text"
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="Enter document title..."
+            style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>AUTHOR</label>
+          <input
+            type="text"
+            value={author}
+            onChange={e => setAuthor(e.target.value)}
+            placeholder="Your name..."
+            style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }}
+          />
+        </div>
 
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>CONTENT</label>
@@ -775,13 +801,13 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
             </select>
           </div>
 
-          <Toggle label="Page Numbers" checked={includePageNumbers} onChange={setIncludePageNumbers} />
-          <Toggle label="Header" checked={includeHeader} onChange={setIncludeHeader} />
+          <SectionToggle label="Page Numbers" checked={includePageNumbers} onChange={setIncludePageNumbers} />
+          <SectionToggle label="Header" checked={includeHeader} onChange={setIncludeHeader} />
           {includeHeader && (
             <input value={headerText} onChange={e => setHeaderText(e.target.value)} placeholder="Header text..."
               style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "8px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 8, boxSizing: "border-box" }} />
           )}
-          <Toggle label="Watermark" checked={includeWatermark} onChange={setIncludeWatermark} />
+          <SectionToggle label="Watermark" checked={includeWatermark} onChange={setIncludeWatermark} />
           {includeWatermark && (
             <input value={watermarkText} onChange={e => setWatermarkText(e.target.value)} placeholder="Watermark text..."
               style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "8px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 8, boxSizing: "border-box" }} />

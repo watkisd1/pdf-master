@@ -157,10 +157,21 @@ const Btn = ({ children, onClick, variant = "primary", icon, small, disabled, st
 const FileCard = ({ file, onView, onRemove, onDownload, selected, onSelect }) => {
   const [hovered, setHovered] = useState(false);
   const ext = file.name?.split(".").pop()?.toUpperCase() || "PDF";
-  const extColor = ext === "PDF" ? COLORS.accent : ext === "DOCX" ? "#60A5FA" : ext === "XLSX" ? COLORS.success : COLORS.gold;
+  const isPDF = ext === "PDF";
+  const extColor = isPDF ? COLORS.accent
+    : ext === "DOCX" || ext === "DOC"  ? "#60A5FA"
+    : ext === "XLSX" || ext === "XLS"  ? COLORS.success
+    : ext === "PPTX" || ext === "PPT"  ? "#FB923C"
+    : ext === "JPG"  || ext === "JPEG" || ext === "PNG" ? COLORS.teal
+    : COLORS.gold;
 
   const handleCardClick = () => {
-    // If a file has a raw object, open it in the viewer directly
+    if (!isPDF) {
+      // Non-PDF files can't be opened in the viewer
+      // Just select them for use in merge/convert panels
+      if (onSelect) onSelect();
+      return;
+    }
     if (onView && (file.raw || file.url)) {
       onView(file);
     } else if (onSelect) {
@@ -192,9 +203,14 @@ const FileCard = ({ file, onView, onRemove, onDownload, selected, onSelect }) =>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</div>
         <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
-          {file.size ? `${(file.size / 1024).toFixed(1)} KB` : "—"} · {file.pages || Math.floor(Math.random() * 40) + 1} pages
+          {file.size ? `${(file.size / 1024).toFixed(1)} KB` : "—"} · {file.pages && file.pages !== "—" ? `${file.pages} pages` : ext}
         </div>
-        <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 1 }}>{file.modified || "Just now"}</div>
+        <div style={{ fontSize: 11, marginTop: 2 }}>
+          {isPDF
+            ? <span style={{ color: COLORS.textDim }}>{file.modified || "Just now"}</span>
+            : <span style={{ color: COLORS.gold, fontWeight: 600 }}>⚠ Convert to PDF to view</span>
+          }
+        </div>
       </div>
       <div style={{ display: "flex", gap: 6, opacity: hovered ? 1 : 0, transition: "opacity 0.15s" }}>
         <button onClick={e => { e.stopPropagation(); onView?.(file); }} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, color: COLORS.textMuted, cursor: "pointer", borderRadius: 7, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -504,6 +520,30 @@ const DashboardSection = ({ files, onModule, onView }) => {
   );
 };
 
+// ─── Shared form components — defined OUTSIDE section components so they
+//     don't get recreated on every render (which would drop input focus) ────────
+const SectionInput = ({ label, value, onChange, placeholder, type = "text" }) => (
+  <div style={{ marginBottom: 16 }}>
+    <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>{label}</label>
+    <input
+      type={type}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }}
+    />
+  </div>
+);
+
+const SectionToggle = ({ label, checked, onChange }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+    <span style={{ fontSize: 13, color: COLORS.text }}>{label}</span>
+    <div onClick={() => onChange(!checked)} style={{ width: 40, height: 22, background: checked ? COLORS.accent : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${checked ? COLORS.accent : COLORS.border}` }}>
+      <div style={{ width: 16, height: 16, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: checked ? 20 : 2, transition: "left 0.2s" }} />
+    </div>
+  </div>
+);
+
 // ─── Section: Create PDF ──────────────────────────────────────────────────────
 const CreateSection = ({ onToast, onAddFiles, onView }) => {
   const [title, setTitle] = useState("");
@@ -692,21 +732,7 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
     }
   };
 
-  const Input = ({ label, value, onChange, placeholder, type = "text" }) => (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "10px 14px", color: COLORS.text, fontSize: 14, outline: "none", boxSizing: "border-box" }} />
-    </div>
-  );
-
-  const Toggle = ({ label, checked, onChange }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-      <span style={{ fontSize: 13, color: COLORS.text }}>{label}</span>
-      <div onClick={() => onChange(!checked)} style={{ width: 40, height: 22, background: checked ? COLORS.accent : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${checked ? COLORS.accent : COLORS.border}` }}>
-        <div style={{ width: 16, height: 16, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: checked ? 20 : 2, transition: "left 0.2s" }} />
-      </div>
-    </div>
+  // ── end of handleCreate ──────────────────────────────────────────────────────
   );
 
   return (
@@ -727,8 +753,8 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
           </div>
         </div>
 
-        <Input label="DOCUMENT TITLE" value={title} onChange={setTitle} placeholder="Enter document title..." />
-        <Input label="AUTHOR" value={author} onChange={setAuthor} placeholder="Your name..." />
+        <SectionInput label="DOCUMENT TITLE" value={title} onChange={setTitle} placeholder="Enter document title..." />
+        <SectionInput label="AUTHOR" value={author} onChange={setAuthor} placeholder="Your name..." />
 
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 12, fontWeight: 600, color: COLORS.textMuted, display: "block", marginBottom: 6, letterSpacing: "0.3px" }}>CONTENT</label>
@@ -759,13 +785,13 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
             </select>
           </div>
 
-          <Toggle label="Page Numbers" checked={includePageNumbers} onChange={setIncludePageNumbers} />
-          <Toggle label="Header" checked={includeHeader} onChange={setIncludeHeader} />
+          <SectionToggle label="Page Numbers" checked={includePageNumbers} onChange={setIncludePageNumbers} />
+          <SectionToggle label="Header" checked={includeHeader} onChange={setIncludeHeader} />
           {includeHeader && (
             <input value={headerText} onChange={e => setHeaderText(e.target.value)} placeholder="Header text..."
               style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "8px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 8, boxSizing: "border-box" }} />
           )}
-          <Toggle label="Watermark" checked={includeWatermark} onChange={setIncludeWatermark} />
+          <SectionToggle label="Watermark" checked={includeWatermark} onChange={setIncludeWatermark} />
           {includeWatermark && (
             <input value={watermarkText} onChange={e => setWatermarkText(e.target.value)} placeholder="Watermark text..."
               style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "8px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 8, boxSizing: "border-box" }} />
@@ -1879,103 +1905,488 @@ const SignSection = ({ files, onToast, onAddFiles }) => {
 };
 
 // ─── Section: Convert ─────────────────────────────────────────────────────────
-const ConvertSection = ({ files, onToast }) => {
+const ConvertSection = ({ files, onToast, onAddFiles }) => {
   const [selectedFile, setSelectedFile] = useState(null);
-  const [targetFormat, setTargetFormat] = useState("docx");
-  const [converting, setConverting] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [targetFormat, setTargetFormat] = useState("jpg");
+  const [converting, setConverting]     = useState(false);
+  const [progress, setProgress]         = useState(0);
+  const [progressMsg, setProgressMsg]   = useState("");
+  const [results, setResults]           = useState([]); // converted file blobs
+  const [imgQuality, setImgQuality]     = useState(0.92);
+  const [imgScale, setImgScale]         = useState(2.0);
+  const [pageRange, setPageRange]       = useState("all");
+  const [toPdfFiles, setToPdfFiles]     = useState([]);
+  const toPdfRef = useRef();
 
-  const pdfTargets = [
-    { id: "docx", label: "Word (.docx)", icon: "W", color: "#4472C4" },
-    { id: "xlsx", label: "Excel (.xlsx)", icon: "X", color: "#217346" },
-    { id: "pptx", label: "PowerPoint (.pptx)", icon: "P", color: "#D24726" },
-    { id: "html", label: "HTML (.html)", icon: "H", color: "#E44D26" },
-    { id: "txt", label: "Plain Text (.txt)", icon: "T", color: COLORS.textMuted },
-    { id: "jpg", label: "Images (.jpg)", icon: "🖼", color: "#FF6B6B" },
-    { id: "png", label: "PNG Images (.png)", icon: "🖼", color: "#4ECDC4" },
-  ];
-  const toPdfSources = [
-    { id: "docx-pdf", label: "Word → PDF", icon: "W", color: "#4472C4" },
-    { id: "xlsx-pdf", label: "Excel → PDF", icon: "X", color: "#217346" },
-    { id: "img-pdf", label: "Image → PDF", icon: "🖼", color: "#FF6B6B" },
-    { id: "html-pdf", label: "HTML → PDF", icon: "H", color: "#E44D26" },
+  // Formats that work entirely in the browser
+  const browserFormats = [
+    { id: "jpg",  label: "JPEG Images",   icon: "\uD83D\uDDBC", color: "#FF6B6B", desc: "One image per page, great for sharing" },
+    { id: "png",  label: "PNG Images",    icon: "\uD83D\uDDBC", color: "#4ECDC4", desc: "Lossless, transparent background support" },
+    { id: "txt",  label: "Plain Text",    icon: "T",            color: "#7B8099", desc: "Extracted text content, no formatting" },
+    { id: "html", label: "HTML Document", icon: "H",            color: "#E44D26", desc: "Web-ready with basic layout preserved" },
   ];
 
-  const startConvert = () => {
-    if (!selectedFile) { onToast("Select a file first.", "error"); return; }
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "8px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+  };
+
+  // ── Parse page range string into array of 1-based page numbers ──────────────
+  const parseRange = (str, total) => {
+    if (!str || str === "all") return Array.from({ length: total }, (_, i) => i + 1);
+    const pages = new Set();
+    str.split(",").forEach(part => {
+      part = part.trim();
+      if (part.includes("-")) {
+        const [s, e] = part.split("-").map(Number);
+        for (let i = s; i <= Math.min(e, total); i++) pages.add(i);
+      } else {
+        const n = Number(part);
+        if (n >= 1 && n <= total) pages.add(n);
+      }
+    });
+    return Array.from(pages).sort((a, b) => a - b);
+  };
+
+  // ── Download a blob ──────────────────────────────────────────────────────────
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Main conversion function ─────────────────────────────────────────────────
+  const startConvert = async () => {
+    if (!selectedFile)     { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw) { onToast("Re-upload the file — no data found.", "error"); return; }
+    setConverting(true); setResults([]); setProgress(0);
+    setProgressMsg("Loading PDF\u2026");
+
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        (window.location.origin || "") + "/pdf.worker.min.js";
+
+      const buffer  = await selectedFile.raw.arrayBuffer();
+      const pdfDoc  = await pdfjsLib.getDocument({ data: buffer }).promise;
+      const total   = pdfDoc.numPages;
+      const pages   = parseRange(pageRange, total);
+      const baseName = selectedFile.name.replace(/\.pdf$/i, "");
+      const converted = [];
+
+      // ── JPG / PNG: render each page to canvas → blob ───────────────────────
+      if (targetFormat === "jpg" || targetFormat === "png") {
+        const mime = targetFormat === "jpg" ? "image/jpeg" : "image/png";
+        const ext  = targetFormat;
+
+        for (let idx = 0; idx < pages.length; idx++) {
+          const pageNum = pages[idx];
+          setProgressMsg(`Rendering page ${pageNum} of ${total}\u2026`);
+          setProgress(Math.round(((idx + 1) / pages.length) * 90));
+
+          const page = await pdfDoc.getPage(pageNum);
+          const vp   = page.getViewport({ scale: imgScale });
+          const canvas = document.createElement("canvas");
+          canvas.width  = vp.width;
+          canvas.height = vp.height;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport: vp }).promise;
+
+          const blob = await new Promise(res =>
+            canvas.toBlob(res, mime, imgQuality)
+          );
+          const filename = pages.length === 1
+            ? `${baseName}.${ext}`
+            : `${baseName}_page${pageNum}.${ext}`;
+          converted.push({ blob, filename, pageNum });
+
+          // Download each page image
+          downloadBlob(blob, filename);
+
+          // Small delay between downloads so browser doesn't block them
+          if (pages.length > 1) await new Promise(r => setTimeout(r, 80));
+        }
+
+        setResults(converted);
+        setProgress(100);
+        setProgressMsg("");
+        onToast(`\u2713 Converted ${pages.length} page(s) to ${ext.toUpperCase()}!`, "success");
+
+      // ── Plain text: extract text from each page ────────────────────────────
+      } else if (targetFormat === "txt") {
+        let fullText = `${baseName}\n${"=".repeat(baseName.length)}\n\n`;
+
+        for (let idx = 0; idx < pages.length; idx++) {
+          const pageNum = pages[idx];
+          setProgressMsg(`Extracting page ${pageNum} of ${total}…`);
+          setProgress(Math.round(((idx + 1) / pages.length) * 90));
+          const page    = await pdfDoc.getPage(pageNum);
+          const content = await page.getTextContent({ includeMarkedContent: false });
+          // Smart join — handles character-fragmented PDFs correctly
+          const sorted  = [...content.items].sort((a, b) => {
+            const yDiff = Math.round(b.transform[5]) - Math.round(a.transform[5]);
+            return yDiff !== 0 ? yDiff : a.transform[4] - b.transform[4];
+          });
+          let text = ""; let prevItem = null;
+          sorted.forEach(item => {
+            if (!item.str) return;
+            if (!prevItem) { text += item.str; prevItem = item; return; }
+            const gap = item.transform[4] - (prevItem.transform[4] + (prevItem.width || 0));
+            const emW = (item.height || 10) * 0.45;
+            const newLine = Math.abs(item.transform[5] - prevItem.transform[5]) > 2;
+            if (newLine) { text += "\n" + item.str; }
+            else if (gap > emW * 0.3 && !text.endsWith(" ") && !item.str.startsWith(" ")) { text += " " + item.str; }
+            else { text += item.str; }
+            prevItem = item;
+          });
+          text = text.trim();
+          fullText += `--- Page ${pageNum} ---\n${text || "(no text on this page)"}\n\n`;
+        }
+
+        const blob     = new Blob([fullText], { type: "text/plain" });
+        const filename = `${baseName}.txt`;
+        downloadBlob(blob, filename);
+        setResults([{ blob, filename }]);
+        setProgress(100);
+        setProgressMsg("");
+        onToast(`\u2713 Extracted text from ${pages.length} page(s)!`, "success");
+
+      // ── HTML: render each page to canvas, embed as img tags in HTML ────────
+      } else if (targetFormat === "html") {
+        setProgressMsg("Building HTML document\u2026");
+        let imgTags = "";
+        const thumbScale = Math.min(imgScale, 1.5);
+
+        for (let idx = 0; idx < pages.length; idx++) {
+          const pageNum = pages[idx];
+          setProgressMsg(`Rendering page ${pageNum} for HTML\u2026`);
+          setProgress(Math.round(((idx + 1) / pages.length) * 85));
+          const page   = await pdfDoc.getPage(pageNum);
+          const vp     = page.getViewport({ scale: thumbScale });
+          const canvas = document.createElement("canvas");
+          canvas.width  = vp.width;
+          canvas.height = vp.height;
+          const ctx = canvas.getContext("2d");
+          ctx.fillStyle = "#fff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvasContext: ctx, viewport: vp }).promise;
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+          imgTags += `
+  <div class="page">
+    <div class="page-label">Page ${pageNum}</div>
+    <img src="${dataUrl}" alt="Page ${pageNum}" style="width:100%;height:auto;display:block;" />
+  </div>`;
+        }
+
+        // Also extract text for searchability
+        setProgressMsg("Adding text layer\u2026");
+        let textContent = "";
+        for (const pageNum of pages) {
+          const page    = await pdfDoc.getPage(pageNum);
+          const content = await page.getTextContent();
+          textContent  += content.items.map(i => i.str).join(" ") + "\n";
+        }
+
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${baseName}</title>
+  <style>
+    body { margin: 0; background: #555; font-family: sans-serif; }
+    .header { background: #C0392B; color: #fff; padding: 16px 24px; font-size: 18px; font-weight: 700; }
+    .pages  { max-width: 900px; margin: 24px auto; display: flex; flex-direction: column; gap: 16px; padding: 0 16px 40px; }
+    .page   { background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,.4); border-radius: 4px; overflow: hidden; }
+    .page-label { background: #f0f0f0; padding: 6px 12px; font-size: 11px; color: #666; font-weight: 600; }
+    .text-layer { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">\uD83D\uDCC4 ${baseName}</div>
+  <div class="pages">${imgTags}
+  </div>
+  <div class="text-layer">${textContent.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>
+</body>
+</html>`;
+
+        const blob     = new Blob([html], { type: "text/html" });
+        const filename = `${baseName}.html`;
+        downloadBlob(blob, filename);
+        setResults([{ blob, filename }]);
+        setProgress(100);
+        setProgressMsg("");
+        onToast(`\u2713 Converted to HTML (${pages.length} pages)!`, "success");
+      }
+
+      setConverting(false);
+    } catch (err) {
+      console.error(err);
+      setConverting(false);
+      setProgressMsg("");
+      onToast(`Conversion failed: ${err.message}`, "error");
+    }
+  };
+
+  // ── Images → PDF conversion ──────────────────────────────────────────────────
+  const convertImagesToPdf = async () => {
+    if (toPdfFiles.length === 0) { onToast("Add image files first.", "error"); return; }
     setConverting(true); setProgress(0);
-    const interval = setInterval(() => {
-      setProgress(p => {
-        if (p >= 100) { clearInterval(interval); setConverting(false); onToast(`Converted to ${targetFormat.toUpperCase()} successfully!`, "success"); return 100; }
-        return p + Math.random() * 20;
-      });
-    }, 200);
+    setProgressMsg("Building PDF from images\u2026");
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const pdfDoc = await PDFDocument.create();
+
+      for (let i = 0; i < toPdfFiles.length; i++) {
+        const file = toPdfFiles[i];
+        setProgressMsg(`Adding image ${i + 1} of ${toPdfFiles.length}\u2026`);
+        setProgress(Math.round(((i + 1) / toPdfFiles.length) * 90));
+        const buffer = await file.arrayBuffer();
+        const ext    = file.name.split(".").pop().toLowerCase();
+        let   img;
+        if (ext === "png") {
+          img = await pdfDoc.embedPng(buffer);
+        } else {
+          img = await pdfDoc.embedJpg(buffer);
+        }
+        const page = pdfDoc.addPage([img.width, img.height]);
+        page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+      }
+
+      const bytes    = await pdfDoc.save();
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const filename = "images_converted.pdf";
+      downloadBlob(blob, filename);
+
+      const rawFile = new File([blob], filename, { type: "application/pdf" });
+      if (onAddFiles) onAddFiles([rawFile]);
+
+      setProgress(100); setProgressMsg("");
+      setToPdfFiles([]);
+      onToast(`\u2713 ${toPdfFiles.length} image(s) converted to PDF!`, "success");
+      setConverting(false);
+    } catch (err) {
+      console.error(err);
+      setConverting(false); setProgressMsg("");
+      onToast(`Conversion failed: ${err.message}`, "error");
+    }
   };
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Convert Files</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>
+        Convert Files
+      </h2>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-        {/* PDF → Other */}
-        <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>PDF → Other Formats</h3>
-          <p style={{ margin: "0 0 18px", fontSize: 12, color: COLORS.textMuted }}>Convert a PDF to Word, Excel, HTML, and more.</p>
 
-          {/* File picker */}
+        {/* ── PDF → Other ── */}
+        <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
+          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>PDF \u2192 Other formats</h3>
+          <p style={{ margin: "0 0 18px", fontSize: 12, color: COLORS.textMuted }}>All conversions run in the browser \u2014 no upload required.</p>
+
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Source PDF</label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Source PDF</label>
             {files.length === 0 ? (
-              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "10px", background: COLORS.surface, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>No files available</div>
+              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "12px", background: COLORS.surface, borderRadius: 8, border: `1px dashed ${COLORS.border}`, textAlign: "center" }}>Upload a PDF first</div>
             ) : (
-              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none" }}>
-                <option value="">Select a file...</option>
+              <select onChange={e => { setSelectedFile(files[parseInt(e.target.value)]); setResults([]); }} style={inputStyle}>
+                <option value="">Select a file\u2026</option>
                 {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
               </select>
             )}
           </div>
 
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 8, textTransform: "uppercase" }}>Target Format</label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-              {pdfTargets.map(t => (
-                <div key={t.id} onClick={() => setTargetFormat(t.id)} style={{ background: targetFormat === t.id ? `${t.color}20` : COLORS.surface, border: `1.5px solid ${targetFormat === t.id ? t.color : COLORS.border}`, borderRadius: 9, padding: "9px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, transition: "all 0.15s" }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: t.color }}>{t.icon}</span>
-                  <span style={{ fontSize: 12, color: targetFormat === t.id ? t.color : COLORS.text, fontWeight: 500 }}>{t.label}</span>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>Target format</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+              {browserFormats.map(f => (
+                <div key={f.id} onClick={() => { setTargetFormat(f.id); setResults([]); }} style={{ background: targetFormat === f.id ? `${f.color}18` : COLORS.surface, border: `1.5px solid ${targetFormat === f.id ? f.color : COLORS.border}`, borderRadius: 9, padding: "10px 14px", cursor: "pointer", transition: "all 0.12s" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 16, minWidth: 22 }}>{f.icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: targetFormat === f.id ? f.color : COLORS.text }}>{f.label}</span>
+                  </div>
+                  {targetFormat === f.id && <p style={{ margin: "4px 0 0 30px", fontSize: 11, color: COLORS.textMuted }}>{f.desc}</p>}
                 </div>
               ))}
             </div>
           </div>
 
+          {/* Image quality options */}
+          {(targetFormat === "jpg" || targetFormat === "png") && (
+            <div style={{ marginBottom: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Scale</label>
+                <select value={imgScale} onChange={e => setImgScale(parseFloat(e.target.value))} style={inputStyle}>
+                  <option value="1.0">1x — Screen (fast)</option>
+                  <option value="1.5">1.5x — Good</option>
+                  <option value="2.0">2x — High quality</option>
+                  <option value="3.0">3x — Print quality</option>
+                </select>
+              </div>
+              {targetFormat === "jpg" && (
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Quality</label>
+                  <select value={imgQuality} onChange={e => setImgQuality(parseFloat(e.target.value))} style={inputStyle}>
+                    <option value="0.6">60% — Small file</option>
+                    <option value="0.8">80% — Balanced</option>
+                    <option value="0.92">92% — High</option>
+                    <option value="1.0">100% — Maximum</option>
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Page range */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Page range</label>
+            <input value={pageRange} onChange={e => setPageRange(e.target.value)} placeholder="all  or  1-3, 5, 7-10" style={inputStyle} />
+          </div>
+
+          {/* Progress */}
           {converting && (
             <div style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: COLORS.textMuted, marginBottom: 6 }}>
-                <span>Converting...</span><span>{Math.round(Math.min(progress, 100))}%</span>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+                <span>{progressMsg || "Converting\u2026"}</span>
+                <span>{progress}%</span>
               </div>
               <div style={{ background: COLORS.surface, borderRadius: 100, height: 6, overflow: "hidden" }}>
-                <div style={{ width: `${Math.min(progress, 100)}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.1s" }} />
+                <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
               </div>
             </div>
           )}
-          <Btn onClick={startConvert} icon={icons.convert} disabled={converting || !selectedFile}>
-            {converting ? "Converting..." : "Convert Now"}
+
+          <Btn
+            onClick={startConvert}
+            icon={icons.convert}
+            disabled={converting || !selectedFile}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            {converting ? "Converting\u2026" : `Convert to ${browserFormats.find(f => f.id === targetFormat)?.label}`}
           </Btn>
+
+          {/* Results */}
+          {results.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: COLORS.success, marginBottom: 8 }}>
+                \u2713 {results.length} file(s) ready \u2014 check your Downloads folder
+              </div>
+              {results.slice(0, 5).map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", background: COLORS.surface, borderRadius: 7, marginBottom: 5, fontSize: 12 }}>
+                  <span style={{ color: COLORS.success }}>\u2713</span>
+                  <span style={{ flex: 1, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.filename}</span>
+                  <button onClick={() => downloadBlob(r.blob, r.filename)} style={{ background: "none", border: "none", color: COLORS.accent, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}>
+                    Re-download
+                  </button>
+                </div>
+              ))}
+              {results.length > 5 && (
+                <div style={{ fontSize: 11, color: COLORS.textDim }}>+{results.length - 5} more files in Downloads</div>
+              )}
+            </div>
+          )}
+
+          {/* Capability note for formats that need a backend */}
+          <div style={{ marginTop: 14, background: COLORS.surface, borderRadius: 8, padding: "10px 14px", fontSize: 11, color: COLORS.textDim, lineHeight: 1.6 }}>
+            \uD83D\uDCA1 <b style={{ color: COLORS.text }}>Word, Excel, PowerPoint</b> conversion requires a server-side service (Adobe PDF Services, CloudConvert, or pdf.co). The formats above work entirely in your browser.
+          </div>
         </div>
 
-        {/* Other → PDF */}
+        {/* ── Images → PDF ── */}
         <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Other → PDF</h3>
-          <p style={{ margin: "0 0 18px", fontSize: 12, color: COLORS.textMuted }}>Convert Word, Excel, images, and more to PDF.</p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {toPdfSources.map(s => (
-              <div key={s.id} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "center", gap: 14 }}>
-                <span style={{ fontSize: 18, fontWeight: 800, color: s.color, minWidth: 24 }}>{s.icon}</span>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{s.label}</span>
-                <Btn variant="secondary" small icon={icons.upload} onClick={() => onToast(`Upload your ${s.label.split(" ")[0]} file`, "")}>Upload</Btn>
+          <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Images \u2192 PDF</h3>
+          <p style={{ margin: "0 0 16px", fontSize: 12, color: COLORS.textMuted }}>Combine one or more JPG or PNG images into a single PDF. Each image becomes one page.</p>
+
+          <input
+            ref={toPdfRef}
+            type="file"
+            multiple
+            accept=".jpg,.jpeg,.png,.webp"
+            style={{ display: "none" }}
+            onChange={e => {
+              setToPdfFiles(prev => [...prev, ...Array.from(e.target.files)]);
+              e.target.value = "";
+            }}
+          />
+
+          {toPdfFiles.length === 0 ? (
+            <div
+              data-dropzone="true"
+              onClick={() => toPdfRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.currentTarget.style.borderColor = COLORS.accent; }}
+              onDragLeave={e => { e.currentTarget.style.borderColor = COLORS.border; }}
+              onDrop={e => {
+                e.preventDefault(); e.stopPropagation();
+                e.currentTarget.style.borderColor = COLORS.border;
+                const dropped = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith("image/"));
+                if (dropped.length) setToPdfFiles(prev => [...prev, ...dropped]);
+              }}
+              style={{ border: `2px dashed ${COLORS.border}`, borderRadius: 12, padding: "36px 20px", textAlign: "center", cursor: "pointer", background: COLORS.surface, marginBottom: 14, transition: "border-color 0.15s" }}
+            >
+              <Icon d={icons.upload} size={30} color={COLORS.textDim} />
+              <p style={{ margin: "10px 0 4px", fontSize: 14, fontWeight: 600, color: COLORS.text }}>Drop images here</p>
+              <p style={{ margin: 0, fontSize: 12, color: COLORS.textMuted }}>JPG, PNG, WebP \u2014 each image becomes one page</p>
+            </div>
+          ) : (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>{toPdfFiles.length} image(s) selected</span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Btn variant="ghost" small onClick={() => toPdfRef.current?.click()} icon={icons.plus}>Add more</Btn>
+                  <Btn variant="ghost" small onClick={() => setToPdfFiles([])}>Clear all</Btn>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 240, overflowY: "auto" }}>
+                {toPdfFiles.map((f, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, background: COLORS.surface, borderRadius: 8, padding: "7px 12px" }}>
+                    <span style={{ fontSize: 16 }}>\uD83D\uDDBC</span>
+                    <span style={{ flex: 1, fontSize: 12, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                    <span style={{ fontSize: 11, color: COLORS.textMuted }}>{(f.size / 1024).toFixed(0)} KB</span>
+                    <button onClick={() => setToPdfFiles(prev => prev.filter((_, j) => j !== i))} style={{ background: "none", border: "none", color: COLORS.error, cursor: "pointer", fontSize: 14, fontFamily: "inherit" }}>\u00d7</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <Btn
+            onClick={convertImagesToPdf}
+            variant="teal"
+            icon={icons.file}
+            disabled={converting || toPdfFiles.length === 0}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
+            {converting ? progressMsg || "Converting\u2026" : `Convert ${toPdfFiles.length > 0 ? toPdfFiles.length + " image(s)" : "images"} to PDF`}
+          </Btn>
+
+          {toPdfFiles.length > 0 && !converting && (
+            <p style={{ fontSize: 11, color: COLORS.textDim, marginTop: 10, lineHeight: 1.5 }}>
+              Images will appear in the order listed above. Each becomes one full page in the PDF.
+            </p>
+          )}
+
+          <div style={{ marginTop: 20, borderTop: `1px solid ${COLORS.border}`, paddingTop: 16 }}>
+            <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 700, color: COLORS.text }}>Other conversions</h4>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 10px", lineHeight: 1.6 }}>
+              These formats require a free external API. The most reliable option is <b style={{ color: COLORS.text }}>CloudConvert</b> or <b style={{ color: COLORS.text }}>pdf.co</b>.
+            </p>
+            {[
+              { label: "Word (.docx) \u2192 PDF", note: "Upload to CloudConvert" },
+              { label: "Excel (.xlsx) \u2192 PDF", note: "Upload to CloudConvert" },
+              { label: "PowerPoint (.pptx) \u2192 PDF", note: "Upload to CloudConvert" },
+            ].map((item, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: COLORS.surface, borderRadius: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>{item.label}</span>
+                <a href="https://cloudconvert.com" target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: COLORS.accent, fontWeight: 700, textDecoration: "none" }}>
+                  Open \u2192
+                </a>
               </div>
             ))}
-          </div>
-          <div style={{ marginTop: 18, padding: "14px", background: COLORS.surface, borderRadius: 10, border: `1px dashed ${COLORS.border}` }}>
-            <div style={{ fontSize: 12, color: COLORS.textMuted, textAlign: "center" }}>Or drag & drop any file here to auto-detect format and convert to PDF</div>
           </div>
         </div>
       </div>
@@ -1985,88 +2396,425 @@ const ConvertSection = ({ files, onToast }) => {
 
 // ─── Section: Extract & Parse ─────────────────────────────────────────────────
 const ExtractSection = ({ files, onToast }) => {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [extractType, setExtractType] = useState("text");
-  const [results, setResults] = useState(null);
-  const [extracting, setExtracting] = useState(false);
+  const [selectedFile, setSelectedFile]   = useState(null);
+  const [extractType, setExtractType]     = useState("text");
+  const [results, setResults]             = useState(null);
+  const [extracting, setExtracting]       = useState(false);
+  const [progress, setProgress]           = useState(0);
+  const [progressMsg, setProgressMsg]     = useState("");
+  const [ocrEnabled, setOcrEnabled]       = useState(false);
+  const [pageRange, setPageRange]         = useState("all");
 
   const types = [
-    { id: "text", label: "Text Content", icon: "T" },
-    { id: "tables", label: "Tables", icon: "⊞" },
-    { id: "images", label: "Images", icon: "🖼" },
-    { id: "metadata", label: "Metadata", icon: "ℹ" },
-    { id: "forms", label: "Form Fields", icon: "☑" },
-    { id: "links", label: "Hyperlinks", icon: "🔗" },
+    { id: "text",     label: "Text Content",  icon: "T",  desc: "Extract all readable text from every page" },
+    { id: "metadata", label: "Metadata",      icon: "ℹ",  desc: "Title, author, dates, creator, file info" },
+    { id: "links",    label: "Hyperlinks",    icon: "🔗", desc: "All URLs and mailto links in the document" },
+    { id: "pages",    label: "Page Info",     icon: "📄", desc: "Page count, dimensions, rotation per page" },
+    { id: "ocr",      label: "OCR (Scanned)", icon: "🔍", desc: "Read text from scanned or image-based PDFs" },
   ];
 
-  const mockResults = {
-    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam...\n\nSection 2: Analysis\nDuis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.",
-    tables: "Table 1 extracted:\n| Name | Value | Percent |\n|------|-------|--------|\n| Item A | 42 | 35% |\n| Item B | 78 | 65% |",
-    metadata: "Title: Sample Document\nAuthor: John Smith\nCreator: PDF Master\nCreated: 2025-01-15\nModified: 2025-03-20\nPages: 12\nFile Size: 245 KB\nEncrypted: No",
-    images: "Found 3 images:\n• Image 1: 640×480 JPEG (p.2)\n• Image 2: 1024×768 PNG (p.5)\n• Image 3: 320×240 JPEG (p.9)",
-    forms: "Found 4 form fields:\n• Name (Text Field)\n• Email (Text Field)\n• Agree to Terms (Checkbox)\n• Signature (Signature Field)",
-    links: "Found 2 hyperlinks:\n• https://example.com (p.1)\n• mailto:contact@example.com (p.3)",
+  // ── Download helper ──────────────────────────────────────────────────────────
+  const downloadText = (text, filename) => {
+    const blob = new Blob([text], { type: "text/plain" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const doExtract = () => {
-    if (!selectedFile) { onToast("Select a file first.", "error"); return; }
+  // ── Real extraction using PDF.js ─────────────────────────────────────────────
+  const doExtract = async () => {
+    if (!selectedFile)      { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw)  { onToast("Re-upload this file — no data found.", "error"); return; }
     setExtracting(true);
-    setTimeout(() => { setResults(mockResults[extractType]); setExtracting(false); }, 1000);
+    setResults(null);
+    setProgress(0);
+    setProgressMsg("Loading PDF…");
+
+    try {
+      // Dynamically import PDF.js
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        (window.location.origin || "") + "/pdf.worker.min.js";
+
+      const buffer = await selectedFile.raw.arrayBuffer();
+      const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
+      const total  = pdfDoc.numPages;
+
+      // ── Text extraction ────────────────────────────────────────────────────
+      if (extractType === "text") {
+        let fullText = "";
+        const pagesToProcess = pageRange === "all"
+          ? Array.from({ length: total }, (_, i) => i + 1)
+          : pageRange.split(",").flatMap(part => {
+              const [s, e] = part.trim().split("-").map(Number);
+              return e ? Array.from({ length: e - s + 1 }, (_, i) => s + i) : [s];
+            }).filter(n => n >= 1 && n <= total);
+
+        for (let i = 0; i < pagesToProcess.length; i++) {
+          const pageNum = pagesToProcess[i];
+          setProgressMsg(`Extracting page ${pageNum} of ${total}…`);
+          setProgress(Math.round(((i + 1) / pagesToProcess.length) * 90));
+          const page    = await pdfDoc.getPage(pageNum);
+          const content = await page.getTextContent({ includeMarkedContent: false });
+          // Smart join — handles character-fragmented PDFs
+          const sortedItems = [...content.items].sort((a, b) => {
+            const yDiff = Math.round(b.transform[5]) - Math.round(a.transform[5]);
+            return yDiff !== 0 ? yDiff : a.transform[4] - b.transform[4];
+          });
+          let pageText = ""; let prevIt = null;
+          sortedItems.forEach(it => {
+            if (it.str === undefined) return;
+            if (!prevIt) { pageText += it.str; prevIt = it; return; }
+            const gap    = it.transform[4] - (prevIt.transform[4] + (prevIt.width || 0));
+            const emW    = (it.height || 10) * 0.45;
+            const newLn  = Math.abs(it.transform[5] - prevIt.transform[5]) > 2;
+            if (newLn) { pageText += "\n" + it.str; }
+            else if (gap > emW * 0.3 && !pageText.endsWith(" ") && !it.str.startsWith(" ")) { pageText += " " + it.str; }
+            else { pageText += it.str; }
+            prevIt = it;
+          });
+          pageText = pageText.trim();
+          if (pageText) {
+            fullText += `\n─── Page ${pageNum} ───\n${pageText}\n`;
+          } else {
+            fullText += `\n─── Page ${pageNum} ─── (no extractable text — try OCR)\n`;
+          }
+        }
+        setResults({ type: "text", content: fullText.trim() || "No text found.", pages: pagesToProcess.length });
+
+      // ── Metadata extraction ────────────────────────────────────────────────
+      } else if (extractType === "metadata") {
+        setProgressMsg("Reading metadata…");
+        setProgress(40);
+        const meta   = await pdfDoc.getMetadata().catch(() => ({}));
+        const info   = meta?.info || {};
+        const lines  = [
+          `Title:        ${info.Title        || "—"}`,
+          `Author:       ${info.Author       || "—"}`,
+          `Subject:      ${info.Subject      || "—"}`,
+          `Keywords:     ${info.Keywords     || "—"}`,
+          `Creator:      ${info.Creator      || "—"}`,
+          `Producer:     ${info.Producer     || "—"}`,
+          `Created:      ${info.CreationDate || "—"}`,
+          `Modified:     ${info.ModDate      || "—"}`,
+          `PDF Version:  ${info.PDFFormatVersion || "—"}`,
+          ``,
+          `Pages:        ${total}`,
+          `File size:    ${(selectedFile.size / 1024).toFixed(1)} KB`,
+          `Encrypted:    ${info.IsEncrypted  ? "Yes" : "No"}`,
+          `Form fields:  ${info.IsAcroFormPresent ? "Yes" : "No"}`,
+          `Tagged PDF:   ${info.IsTaggedPDF  ? "Yes" : "No"}`,
+        ];
+        setProgress(100);
+        setResults({ type: "metadata", content: lines.join("\n") });
+
+      // ── Hyperlink extraction ───────────────────────────────────────────────
+      } else if (extractType === "links") {
+        let allLinks = [];
+        for (let p = 1; p <= total; p++) {
+          setProgressMsg(`Scanning page ${p} of ${total} for links…`);
+          setProgress(Math.round((p / total) * 90));
+          const page        = await pdfDoc.getPage(p);
+          const annotations = await page.getAnnotations();
+          annotations.forEach(ann => {
+            if (ann.subtype === "Link") {
+              if (ann.url) {
+                allLinks.push(`• [Page ${p}] ${ann.url}`);
+              } else if (ann.dest) {
+                allLinks.push(`• [Page ${p}] Internal link → ${JSON.stringify(ann.dest)}`);
+              } else if (ann.action?.URI) {
+                allLinks.push(`• [Page ${p}] ${ann.action.URI}`);
+              }
+            }
+          });
+        }
+        setProgress(100);
+        setResults({
+          type: "links",
+          content: allLinks.length > 0
+            ? `Found ${allLinks.length} link(s):\n\n${allLinks.join("\n")}`
+            : "No hyperlinks found in this document.",
+        });
+
+      // ── Page info ──────────────────────────────────────────────────────────
+      } else if (extractType === "pages") {
+        let info = `PDF contains ${total} page(s)\n\n`;
+        for (let p = 1; p <= total; p++) {
+          setProgressMsg(`Reading page ${p} info…`);
+          setProgress(Math.round((p / total) * 90));
+          const page = await pdfDoc.getPage(p);
+          const vp   = page.getViewport({ scale: 1 });
+          const rot  = page.rotate || 0;
+          info += `Page ${p}: ${Math.round(vp.width)} × ${Math.round(vp.height)} pts`;
+          info += ` (${(vp.width * 0.0352778).toFixed(1)} × ${(vp.height * 0.0352778).toFixed(1)} cm)`;
+          if (rot) info += ` — rotated ${rot}°`;
+          info += "\n";
+        }
+        setProgress(100);
+        setResults({ type: "pages", content: info.trim() });
+
+      // ── OCR using Tesseract.js ─────────────────────────────────────────────
+      } else if (extractType === "ocr") {
+        setProgressMsg("Loading OCR engine…");
+        setProgress(5);
+
+        let Tesseract;
+        try {
+          Tesseract = await import("tesseract.js");
+        } catch {
+          setResults({
+            type: "ocr",
+            content: "Tesseract.js is not installed.\n\nRun this command in your pdf-master folder:\n\n  npm install tesseract.js\n\nThen restart the app and try again.",
+            error: true,
+          });
+          setExtracting(false);
+          return;
+        }
+
+        const worker = await Tesseract.createWorker("eng", 1, {
+          logger: m => {
+            if (m.status === "recognizing text") {
+              setProgress(10 + Math.round(m.progress * 85));
+              setProgressMsg(`OCR page ${m.jobId || 1}… ${Math.round(m.progress * 100)}%`);
+            }
+          },
+        });
+
+        let ocrText = "";
+        const pagesToOCR = Math.min(total, 5); // OCR up to 5 pages (can be slow)
+
+        for (let p = 1; p <= pagesToOCR; p++) {
+          setProgressMsg(`Rendering page ${p} for OCR…`);
+          const page = await pdfDoc.getPage(p);
+          const vp   = page.getViewport({ scale: 2.0 }); // higher scale = better OCR
+          const canvas = document.createElement("canvas");
+          canvas.width  = vp.width;
+          canvas.height = vp.height;
+          await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+
+          setProgressMsg(`Running OCR on page ${p}…`);
+          const { data: { text } } = await worker.recognize(canvas);
+          ocrText += `\n─── Page ${p} (OCR) ───\n${text.trim()}\n`;
+        }
+
+        await worker.terminate();
+        setProgress(100);
+
+        const suffix = pagesToOCR < total ? `\n\n(Showing first ${pagesToOCR} of ${total} pages — OCR can be slow)` : "";
+        setResults({ type: "ocr", content: (ocrText.trim() || "No text detected.") + suffix });
+      }
+
+      setProgress(100);
+      setProgressMsg("");
+      setExtracting(false);
+      onToast(`Extraction complete!`, "success");
+
+    } catch (err) {
+      console.error(err);
+      setExtracting(false);
+      setProgressMsg("");
+      onToast(`Extraction failed: ${err.message}`, "error");
+      setResults({ type: extractType, content: `Error: ${err.message}`, error: true });
+    }
+  };
+
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "8px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
   };
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Extract & Parse</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>
+        Extract & OCR
+      </h2>
       <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 24 }}>
+
+        {/* ── Left: Controls ── */}
         <div>
+          {/* File picker */}
           <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Source File</label>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Source file
+            </label>
             {files.length === 0 ? (
-              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "10px", background: COLORS.surface2, borderRadius: 8, border: `1px solid ${COLORS.border}` }}>No files available</div>
+              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "12px", background: COLORS.surface2, borderRadius: 8, border: `1px dashed ${COLORS.border}`, textAlign: "center" }}>
+                Upload a PDF first
+              </div>
             ) : (
-              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none" }}>
-                <option value="">Select a file...</option>
-                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              <select
+                onChange={e => setSelectedFile(files[parseInt(e.target.value)])}
+                style={{ ...inputStyle }}
+              >
+                <option value="">Select a file…</option>
+                {files.map((f, i) => (
+                  <option key={i} value={i}>{f.name}</option>
+                ))}
               </select>
             )}
           </div>
 
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 8, textTransform: "uppercase" }}>Extract Type</label>
+          {/* Extraction type */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>
+              Extract type
+            </label>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {types.map(t => (
-                <div key={t.id} onClick={() => setExtractType(t.id)} style={{ background: extractType === t.id ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${extractType === t.id ? COLORS.accent : COLORS.border}`, borderRadius: 9, padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, transition: "all 0.15s" }}>
-                  <span style={{ fontSize: 15, minWidth: 20 }}>{t.icon}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: extractType === t.id ? COLORS.accent : COLORS.text }}>{t.label}</span>
+                <div
+                  key={t.id}
+                  onClick={() => setExtractType(t.id)}
+                  style={{
+                    background: extractType === t.id ? COLORS.accentSoft : COLORS.surface2,
+                    border: `1.5px solid ${extractType === t.id ? COLORS.accent : COLORS.border}`,
+                    borderRadius: 9, padding: "10px 14px", cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 16, minWidth: 22 }}>{t.icon}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: extractType === t.id ? COLORS.accent : COLORS.text }}>
+                      {t.label}
+                    </span>
+                    {t.id === "ocr" && (
+                      <span style={{ fontSize: 10, background: COLORS.gold + "30", color: COLORS.gold, border: `1px solid ${COLORS.gold}`, borderRadius: 100, padding: "1px 7px", fontWeight: 700 }}>
+                        Tesseract
+                      </span>
+                    )}
+                  </div>
+                  {extractType === t.id && (
+                    <p style={{ margin: "4px 0 0 30px", fontSize: 11, color: COLORS.textMuted }}>{t.desc}</p>
+                  )}
                 </div>
               ))}
             </div>
           </div>
 
-          <Btn onClick={doExtract} icon={icons.extract} disabled={extracting || !selectedFile} style={{ width: "100%", justifyContent: "center" }}>
-            {extracting ? "Extracting..." : "Extract"}
-          </Btn>
+          {/* Page range — only for text */}
+          {extractType === "text" && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                Page range
+              </label>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                {[["all", "All pages"], ["range", "Custom range"]].map(([id, lbl]) => (
+                  <div key={id} onClick={() => setPageRange(id === "all" ? "all" : "")} style={{ flex: 1, background: (pageRange === "all") === (id === "all") ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${(pageRange === "all") === (id === "all") ? COLORS.accent : COLORS.border}`, borderRadius: 8, padding: "7px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: (pageRange === "all") === (id === "all") ? COLORS.accent : COLORS.text, textAlign: "center" }}>
+                    {lbl}
+                  </div>
+                ))}
+              </div>
+              {pageRange !== "all" && (
+                <input
+                  value={pageRange}
+                  onChange={e => setPageRange(e.target.value)}
+                  placeholder="e.g. 1-3, 5, 7-10"
+                  style={inputStyle}
+                />
+              )}
+            </div>
+          )}
+
+          {/* OCR note */}
+          {extractType === "ocr" && (
+            <div style={{ background: COLORS.goldSoft, border: `1px solid ${COLORS.gold}`, borderRadius: 9, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: COLORS.gold, lineHeight: 1.6 }}>
+              <b>OCR requires tesseract.js</b><br />
+              Run <code style={{ background: "rgba(0,0,0,0.1)", borderRadius: 4, padding: "1px 5px" }}>npm install tesseract.js</code> if you haven't already. OCR is slow — up to 5 pages at a time.
+            </div>
+          )}
+
+          {/* Extract button */}
+          {extracting ? (
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+                <span>{progressMsg || "Processing…"}</span>
+                <span>{progress}%</span>
+              </div>
+              <div style={{ background: COLORS.surface, borderRadius: 100, height: 6, overflow: "hidden", marginBottom: 10 }}>
+                <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.3s" }} />
+              </div>
+              <div style={{ fontSize: 11, color: COLORS.textDim, textAlign: "center" }}>Please wait…</div>
+            </div>
+          ) : (
+            <Btn
+              onClick={doExtract}
+              icon={icons.extract}
+              disabled={!selectedFile}
+              style={{ width: "100%", justifyContent: "center" }}
+            >
+              Extract {types.find(t => t.id === extractType)?.label}
+            </Btn>
+          )}
         </div>
 
+        {/* ── Right: Results ── */}
         <div>
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px", minHeight: 360 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px", minHeight: 400 }}>
             {results ? (
               <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                  <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: COLORS.text }}>Extracted {types.find(t => t.id === extractType)?.label}</h3>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: results.error ? COLORS.error : COLORS.text }}>
+                      {results.error ? "⚠ Error" : `✓ ${types.find(t => t.id === results.type)?.label}`}
+                    </h3>
+                    {results.pages && (
+                      <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 3 }}>
+                        {results.pages} page(s) processed · {results.content.length.toLocaleString()} characters
+                      </div>
+                    )}
+                  </div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <Btn variant="secondary" small icon={icons.download} onClick={() => onToast("Downloaded!", "success")}>Download</Btn>
+                    <Btn
+                      variant="secondary"
+                      small
+                      icon={icons.download}
+                      onClick={() => downloadText(results.content, `${selectedFile?.name?.replace(".pdf","") || "extracted"}_${results.type}.txt`)}
+                    >
+                      Download .txt
+                    </Btn>
                     <Btn variant="ghost" small onClick={() => setResults(null)}>Clear</Btn>
                   </div>
                 </div>
-                <pre style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "16px", fontSize: 12, color: COLORS.text, lineHeight: 1.7, overflow: "auto", margin: 0, whiteSpace: "pre-wrap", fontFamily: "'Courier New', monospace" }}>
-                  {results}
+
+                {/* Result preview */}
+                <pre style={{
+                  background: COLORS.surface,
+                  border: `1px solid ${results.error ? COLORS.error : COLORS.border}`,
+                  borderRadius: 10, padding: "16px", fontSize: 12,
+                  color: results.error ? COLORS.error : COLORS.text,
+                  lineHeight: 1.7, overflow: "auto", margin: 0,
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "'Courier New', Consolas, monospace",
+                  maxHeight: 520,
+                }}>
+                  {results.content}
                 </pre>
+
+                {/* Word/character count */}
+                {!results.error && (
+                  <div style={{ display: "flex", gap: 20, marginTop: 12, fontSize: 11, color: COLORS.textDim }}>
+                    <span>📝 {results.content.split(/\s+/).filter(Boolean).length.toLocaleString()} words</span>
+                    <span>🔤 {results.content.length.toLocaleString()} characters</span>
+                    <span>📄 {results.content.split("\n").length.toLocaleString()} lines</span>
+                  </div>
+                )}
               </>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", minHeight: 300, color: COLORS.textDim, textAlign: "center" }}>
-                <Icon d={icons.extract} size={40} color={COLORS.textDim} />
-                <p style={{ margin: "16px 0 0", fontSize: 14 }}>Select a file and extraction type, then click Extract.</p>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", minHeight: 340, color: COLORS.textDim, textAlign: "center" }}>
+                <Icon d={icons.extract} size={44} color={COLORS.textDim} />
+                <p style={{ margin: "16px 0 6px", fontSize: 15, fontWeight: 600, color: COLORS.text }}>
+                  Ready to extract
+                </p>
+                <p style={{ margin: 0, fontSize: 13, maxWidth: 280, lineHeight: 1.6 }}>
+                  Select a file and extraction type on the left, then click Extract.
+                </p>
+                <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start", background: COLORS.surface, borderRadius: 10, padding: "14px 18px", fontSize: 12, color: COLORS.textMuted }}>
+                  <span>📄 <b style={{ color: COLORS.text }}>Text</b> — works on any searchable PDF</span>
+                  <span>ℹ <b style={{ color: COLORS.text }}>Metadata</b> — always available</span>
+                  <span>🔗 <b style={{ color: COLORS.text }}>Links</b> — finds all URLs</span>
+                  <span>🔍 <b style={{ color: COLORS.text }}>OCR</b> — for scanned / image PDFs</span>
+                </div>
               </div>
             )}
           </div>
@@ -2077,162 +2825,848 @@ const ExtractSection = ({ files, onToast }) => {
 };
 
 // ─── Section: Security ────────────────────────────────────────────────────────
-const SecuritySection = ({ files, onToast }) => {
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [password, setPassword] = useState("");
-  const [confirmPwd, setConfirmPwd] = useState("");
-  const [permissions, setPermissions] = useState({ print: true, copy: true, edit: false, annotate: true });
-  const [encLevel, setEncLevel] = useState("256");
-  const [redactText, setRedactText] = useState("");
-  const [showPwd, setShowPwd] = useState(false);
+const SecuritySection = ({ files, onToast, onAddFiles }) => {
+  const [selectedFile, setSelectedFile]   = useState(null);
+  const [userPwd, setUserPwd]             = useState("");
+  const [ownerPwd, setOwnerPwd]           = useState("");
+  const [confirmPwd, setConfirmPwd]       = useState("");
+  const [showUserPwd, setShowUserPwd]     = useState(false);
+  const [showOwnerPwd, setShowOwnerPwd]   = useState(false);
+  const [encLevel, setEncLevel]           = useState("128");
+  const [protecting, setProtecting]       = useState(false);
+  const [unlocking, setUnlocking]         = useState(false);
+  const [unlockPwd, setUnlockPwd]         = useState("");
+  const [unlockFile, setUnlockFile]       = useState(null);
+  const [redactText, setRedactText]       = useState("");
+  const [redacting, setRedacting]         = useState(false);
+  const [tab, setTab]                     = useState("protect");
+  const [permissions, setPermissions]     = useState({
+    printing:     true,
+    modifying:    false,
+    copying:      true,
+    annotating:   true,
+    fillingForms: true,
+  });
 
-  const applyProtection = () => {
-    if (!selectedFile) { onToast("Select a file first.", "error"); return; }
-    if (!password) { onToast("Enter a password.", "error"); return; }
-    if (password !== confirmPwd) { onToast("Passwords do not match.", "error"); return; }
-    onToast(`"${selectedFile.name}" protected with ${encLevel}-bit encryption!`, "success");
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "9px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
   };
 
-  const PermToggle = ({ key: k, label }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${COLORS.border}` }}>
-      <span style={{ fontSize: 13, color: COLORS.text }}>{label}</span>
-      <div onClick={() => setPermissions(p => ({ ...p, [k]: !p[k] }))} style={{ width: 38, height: 21, background: permissions[k] ? COLORS.success : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${permissions[k] ? COLORS.success : COLORS.border}` }}>
-        <div style={{ width: 15, height: 15, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: permissions[k] ? 19 : 2, transition: "left 0.2s" }} />
+  const Toggle = ({ label, desc, k }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+      <div>
+        <div style={{ fontSize: 13, color: COLORS.text, fontWeight: 500 }}>{label}</div>
+        {desc && <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 2 }}>{desc}</div>}
+      </div>
+      <div
+        onClick={() => setPermissions(p => ({ ...p, [k]: !p[k] }))}
+        style={{ width: 40, height: 22, background: permissions[k] ? COLORS.success : COLORS.surface3, borderRadius: 11, position: "relative", cursor: "pointer", transition: "background 0.2s", border: `1px solid ${permissions[k] ? COLORS.success : COLORS.border}`, flexShrink: 0, marginLeft: 16 }}>
+        <div style={{ width: 16, height: 16, background: COLORS.white, borderRadius: "50%", position: "absolute", top: 2, left: permissions[k] ? 20 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
       </div>
     </div>
   );
 
+  const pwdStrength = (pwd) => {
+    if (!pwd) return { score: 0, label: "", color: COLORS.border };
+    let score = 0;
+    if (pwd.length >= 8)  score++;
+    if (pwd.length >= 12) score++;
+    if (/[A-Z]/.test(pwd)) score++;
+    if (/[0-9]/.test(pwd)) score++;
+    if (/[^A-Za-z0-9]/.test(pwd)) score++;
+    if (score <= 1) return { score, label: "Weak",   color: COLORS.error };
+    if (score <= 3) return { score, label: "Fair",   color: COLORS.gold };
+    return                { score, label: "Strong",  color: COLORS.success };
+  };
+  const strength = pwdStrength(userPwd);
+
+  const applyProtection = async () => {
+    if (!selectedFile)          { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw)      { onToast("Re-upload the file.", "error"); return; }
+    if (!userPwd)               { onToast("Enter a user password.", "error"); return; }
+    if (userPwd !== confirmPwd) { onToast("Passwords do not match.", "error"); return; }
+    if (userPwd.length < 4)     { onToast("Password must be at least 4 characters.", "error"); return; }
+    setProtecting(true);
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const buffer = await selectedFile.raw.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const permFlags = {
+        printing:             permissions.printing     ? "highResolution" : "none",
+        modifying:            permissions.modifying,
+        copying:              permissions.copying,
+        annotating:           permissions.annotating,
+        fillingForms:         permissions.fillingForms,
+        contentAccessibility: true,
+        documentAssembly:     false,
+      };
+      const encryptedBytes = await pdfDoc.save({
+        userPassword:  userPwd,
+        ownerPassword: ownerPwd || userPwd + "_owner",
+        permissions:   permFlags,
+      });
+      const fileName = selectedFile.name.replace(/\.pdf$/i, "") + "_protected.pdf";
+      const blob     = new Blob([encryptedBytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+      if (onAddFiles) onAddFiles([rawFile]);
+      onToast(`\u2713 "${fileName}" protected successfully!`, "success");
+      setUserPwd(""); setConfirmPwd(""); setOwnerPwd("");
+      setProtecting(false);
+    } catch (err) {
+      console.error(err);
+      setProtecting(false);
+      onToast(`Protection failed: ${err.message}`, "error");
+    }
+  };
+
+  const removeProtection = async () => {
+    if (!unlockFile)     { onToast("Select a file.", "error"); return; }
+    if (!unlockFile.raw) { onToast("Re-upload the file.", "error"); return; }
+    if (!unlockPwd)      { onToast("Enter the password.", "error"); return; }
+    setUnlocking(true);
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const buffer = await unlockFile.raw.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(buffer, { password: unlockPwd });
+      const bytes  = await pdfDoc.save();
+      const fileName = unlockFile.name.replace(/(_protected)?\.pdf$/i, "") + "_unlocked.pdf";
+      const blob   = new Blob([bytes], { type: "application/pdf" });
+      const rawFile = new File([blob], fileName, { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+      if (onAddFiles) onAddFiles([rawFile]);
+      onToast(`\u2713 Password removed \u2014 "${fileName}" is unlocked!`, "success");
+      setUnlockPwd(""); setUnlocking(false);
+    } catch (err) {
+      console.error(err);
+      setUnlocking(false);
+      const msg = err.message?.toLowerCase();
+      if (msg?.includes("password") || msg?.includes("decrypt")) {
+        onToast("Wrong password \u2014 could not unlock this PDF.", "error");
+      } else {
+        onToast(`Unlock failed: ${err.message}`, "error");
+      }
+    }
+  };
+
+  const applyRedaction = async () => {
+    if (!selectedFile)      { onToast("Select a file first.", "error"); return; }
+    if (!selectedFile.raw)  { onToast("Re-upload the file.", "error"); return; }
+    if (!redactText.trim()) { onToast("Enter text to redact.", "error"); return; }
+    setRedacting(true);
+    try {
+      const { PDFDocument, rgb } = await import("pdf-lib");
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = (window.location.origin || "") + "/pdf.worker.min.js";
+      const buffer   = await selectedFile.raw.arrayBuffer();
+      const pdfDoc   = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const pdfJsDoc = await pdfjsLib.getDocument({ data: buffer.slice(0) }).promise;
+      const total    = pdfDoc.getPageCount();
+      let   count    = 0;
+      for (let p = 0; p < total; p++) {
+        const page   = pdfDoc.getPage(p);
+        const { height: pageH } = page.getSize();
+        const jsPage = await pdfJsDoc.getPage(p + 1);
+        const content = await jsPage.getTextContent();
+        content.items.forEach(item => {
+          if (!item.str?.toLowerCase().includes(redactText.toLowerCase())) return;
+          const tx = item.transform;
+          const x  = tx[4];
+          const y  = pageH - tx[5] - (item.height || 10);
+          const w  = item.width  || 60;
+          const h  = (item.height || 10) + 2;
+          page.drawRectangle({ x: x - 2, y, width: w + 4, height: h + 2, color: rgb(0, 0, 0) });
+          count++;
+        });
+      }
+      if (count === 0) { onToast(`"${redactText}" not found in this document.`, "error"); setRedacting(false); return; }
+      const bytes    = await pdfDoc.save();
+      const fileName = selectedFile.name.replace(/\.pdf$/i, "") + "_redacted.pdf";
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+      if (onAddFiles) onAddFiles([rawFile]);
+      onToast(`\u2713 Redacted ${count} instance(s) of "${redactText}"!`, "success");
+      setRedactText(""); setRedacting(false);
+    } catch (err) {
+      console.error(err);
+      setRedacting(false);
+      onToast(`Redaction failed: ${err.message}`, "error");
+    }
+  };
+
   return (
     <div>
       <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Security & Permissions</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-        {/* Password Protection */}
-        <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-          <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: COLORS.text, display: "flex", alignItems: "center", gap: 8 }}>
-            <Icon d={icons.lock} size={16} color={COLORS.gold} /> Password Protection
-          </h3>
+      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+        {[["protect","\uD83D\uDD12 Protect"],["unlock","\uD83D\uDD13 Unlock"],["redact","\u2B1B Redact"]].map(([id, lbl]) => (
+          <button key={id} onClick={() => setTab(id)} style={{ background: tab === id ? COLORS.gold : "transparent", color: tab === id ? "#0D0E14" : COLORS.textMuted, border: `1px solid ${tab === id ? COLORS.gold : COLORS.border}`, borderRadius: 9, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.15s", fontFamily: "inherit" }}>{lbl}</button>
+        ))}
+      </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>File</label>
-            <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none" }}>
-              <option value="">Select file...</option>
-              {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
-            </select>
-          </div>
-
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Password</label>
-            <div style={{ position: "relative" }}>
-              <input type={showPwd ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter password..."
-                style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 38px 9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-              <button onClick={() => setShowPwd(v => !v)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer" }}>
-                <Icon d={icons.eye} size={15} />
-              </button>
+      {tab === "protect" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 15, fontWeight: 700, color: COLORS.text, display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon d={icons.lock} size={16} color={COLORS.gold} /> Password Protection
+            </h3>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>File to protect</label>
+              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={inputStyle}>
+                <option value="">Select file\u2026</option>
+                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              </select>
             </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>User password</label>
+              <div style={{ position: "relative" }}>
+                <input type={showUserPwd ? "text" : "password"} value={userPwd} onChange={e => setUserPwd(e.target.value)} placeholder="Enter password\u2026" style={{ ...inputStyle, paddingRight: 38 }} />
+                <button onClick={() => setShowUserPwd(v => !v)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer" }}><Icon d={icons.eye} size={15} /></button>
+              </div>
+              {userPwd && (
+                <div style={{ marginTop: 7 }}>
+                  <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                    {[1,2,3,4,5].map(i => <div key={i} style={{ flex: 1, height: 3, borderRadius: 2, background: i <= strength.score ? strength.color : COLORS.border }} />)}
+                  </div>
+                  <div style={{ fontSize: 11, color: strength.color, fontWeight: 600 }}>{strength.label}</div>
+                </div>
+              )}
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Confirm password</label>
+              <input type="password" value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)} placeholder="Confirm password\u2026" style={{ ...inputStyle, borderColor: confirmPwd && confirmPwd !== userPwd ? COLORS.error : COLORS.border }} />
+              {confirmPwd && confirmPwd !== userPwd && <div style={{ fontSize: 11, color: COLORS.error, marginTop: 4 }}>\u26a0 Passwords do not match</div>}
+            </div>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Owner password <span style={{ color: COLORS.textDim, fontWeight: 400 }}>(optional)</span></label>
+              <div style={{ position: "relative" }}>
+                <input type={showOwnerPwd ? "text" : "password"} value={ownerPwd} onChange={e => setOwnerPwd(e.target.value)} placeholder="Leave blank to auto-generate\u2026" style={{ ...inputStyle, paddingRight: 38 }} />
+                <button onClick={() => setShowOwnerPwd(v => !v)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: COLORS.textMuted, cursor: "pointer" }}><Icon d={icons.eye} size={15} /></button>
+              </div>
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 8, textTransform: "uppercase", letterSpacing: ".4px" }}>Encryption level</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[["128","RC4 128-bit","Widely supported"],["256","AES 256-bit","Strongest, PDF 1.7+"]].map(([v, l, d]) => (
+                  <div key={v} onClick={() => setEncLevel(v)} style={{ flex: 1, background: encLevel === v ? COLORS.goldSoft : COLORS.surface, border: `1.5px solid ${encLevel === v ? COLORS.gold : COLORS.border}`, borderRadius: 9, padding: "10px 12px", cursor: "pointer" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: encLevel === v ? COLORS.gold : COLORS.text }}>{l}</div>
+                    <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 2 }}>{d}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <Btn onClick={applyProtection} icon={icons.lock} variant="gold" disabled={!selectedFile || !userPwd || userPwd !== confirmPwd || protecting} style={{ width: "100%", justifyContent: "center" }}>
+              {protecting ? "Encrypting\u2026" : "Protect Document"}
+            </Btn>
+            <p style={{ fontSize: 11, color: COLORS.textDim, marginTop: 10, lineHeight: 1.5 }}>Downloads automatically and is added to your workspace. Keep your password safe \u2014 it cannot be recovered.</p>
           </div>
 
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Confirm Password</label>
-            <input type="password" value={confirmPwd} onChange={e => setConfirmPwd(e.target.value)} placeholder="Confirm password..."
-              style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
-          </div>
-
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.textDim, display: "block", marginBottom: 6, textTransform: "uppercase" }}>Encryption</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[["128", "128-bit"], ["256", "256-bit AES"]].map(([v, l]) => (
-                <div key={v} onClick={() => setEncLevel(v)} style={{ flex: 1, background: encLevel === v ? COLORS.goldSoft : COLORS.surface, border: `1.5px solid ${encLevel === v ? COLORS.gold : COLORS.border}`, borderRadius: 9, padding: "9px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600, color: encLevel === v ? COLORS.gold : COLORS.text, textAlign: "center" }}>
-                  {l}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Document Permissions</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 16px" }}>Set what users can do after opening with the password.</p>
+            <Toggle k="printing"     label="Allow printing"     desc="Users can print the document" />
+            <Toggle k="copying"      label="Allow copying text" desc="Users can copy text to clipboard" />
+            <Toggle k="modifying"    label="Allow editing"      desc="Users can modify the document" />
+            <Toggle k="annotating"   label="Allow annotations"  desc="Users can add comments" />
+            <Toggle k="fillingForms" label="Allow form filling" desc="Users can fill in form fields" />
+            <div style={{ marginTop: 16, background: COLORS.surface, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textDim, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>Summary</div>
+              {[["Printing",permissions.printing],["Copying",permissions.copying],["Editing",permissions.modifying],["Annotations",permissions.annotating],["Forms",permissions.fillingForms]].map(([l,v]) => (
+                <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0", borderBottom: `1px solid ${COLORS.border}` }}>
+                  <span style={{ color: COLORS.textMuted }}>{l}</span>
+                  <span style={{ color: v ? COLORS.success : COLORS.error, fontWeight: 600 }}>{v ? "\u2713 Allowed" : "\u2715 Blocked"}</span>
                 </div>
               ))}
             </div>
           </div>
-
-          <Btn onClick={applyProtection} icon={icons.lock} variant="gold" disabled={!selectedFile} style={{ width: "100%", justifyContent: "center" }}>
-            Protect Document
-          </Btn>
         </div>
+      )}
 
-        {/* Permissions & Redaction */}
-        <div>
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px", marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Document Permissions</h3>
-            <PermToggle key="print" label="Allow Printing" />
-            <PermToggle key="copy" label="Allow Copying Text" />
-            <PermToggle key="edit" label="Allow Editing" />
-            <PermToggle key="annotate" label="Allow Annotations" />
-          </div>
-
-          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "22px" }}>
-            <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Redaction</h3>
-            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 12px" }}>Permanently remove sensitive content from your PDF.</p>
-            <input value={redactText} onChange={e => setRedactText(e.target.value)} placeholder="Enter text or pattern to redact..."
-              style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 10 }} />
-            <Btn variant="secondary" icon={icons.search} onClick={() => onToast("Redact applied!", "success")} disabled={!redactText.trim()}>Apply Redaction</Btn>
+      {tab === "unlock" && (
+        <div style={{ maxWidth: 480 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "24px" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>\uD83D\uDD13 Remove Password</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 20px", lineHeight: 1.6 }}>Enter the current password to decrypt the PDF and save an unprotected copy. You must know the password.</p>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Protected file</label>
+              <select onChange={e => setUnlockFile(files[parseInt(e.target.value)])} style={inputStyle}>
+                <option value="">Select file\u2026</option>
+                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Current password</label>
+              <input type="password" value={unlockPwd} onChange={e => setUnlockPwd(e.target.value)} placeholder="Enter the PDF password\u2026" onKeyDown={e => e.key === "Enter" && removeProtection()} style={inputStyle} />
+            </div>
+            <Btn onClick={removeProtection} disabled={!unlockFile || !unlockPwd || unlocking} style={{ width: "100%", justifyContent: "center" }}>
+              {unlocking ? "Unlocking\u2026" : "\uD83D\uDD13 Remove Password & Download"}
+            </Btn>
           </div>
         </div>
-      </div>
+      )}
+
+      {tab === "redact" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "24px" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>\u2B1B Text Redaction</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 18px", lineHeight: 1.6 }}>Permanently blacks out all instances of the specified text across every page. This is irreversible.</p>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Source file</label>
+              <select onChange={e => setSelectedFile(files[parseInt(e.target.value)])} style={inputStyle}>
+                <option value="">Select file\u2026</option>
+                {files.map((f, i) => <option key={i} value={i}>{f.name}</option>)}
+              </select>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>Text to redact</label>
+              <input value={redactText} onChange={e => setRedactText(e.target.value)} placeholder="e.g. John Smith, 555-1234, SSN\u2026" style={inputStyle} />
+              <p style={{ fontSize: 11, color: COLORS.textDim, marginTop: 5 }}>Case-insensitive. All matching text on all pages is blacked out.</p>
+            </div>
+            <div style={{ background: COLORS.accentSoft, border: `1px solid ${COLORS.accent}`, borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: COLORS.accent, lineHeight: 1.5 }}>
+              \u26a0\uFE0F <b>Permanent action.</b> Redaction cannot be undone. Always keep a copy of the original.
+            </div>
+            <Btn onClick={applyRedaction} variant="secondary" disabled={!selectedFile || !redactText.trim() || redacting} style={{ width: "100%", justifyContent: "center" }}>
+              {redacting ? "Redacting\u2026" : "\u2B1B Apply Redaction"}
+            </Btn>
+          </div>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "24px" }}>
+            <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 700, color: COLORS.text }}>Common redaction targets</h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {[["Social Security Numbers","SSN"],["Phone numbers","555-"],["Email addresses","@"],["Names","Full name here"],["Addresses","Street, City"],["Account numbers","Account #"]].map(([label, example]) => (
+                <div key={label} onClick={() => setRedactText(example)} style={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 8, padding: "10px 14px", cursor: "pointer", transition: "border-color 0.12s" }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.accent}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.border}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.text }}>{label}</div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim, marginTop: 2 }}>Click to use: "{example}"</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 // ─── Section: Search ──────────────────────────────────────────────────────────
-const SearchSection = ({ files, onToast }) => {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
+const SearchSection = ({ files, onToast, onView }) => {
+  const [query, setQuery]           = useState("");
+  const [results, setResults]       = useState([]);
+  const [searching, setSearching]   = useState(false);
+  const [indexed, setIndexed]       = useState(false);
+  const [indexing, setIndexing]     = useState(false);
+  const [indexProgress, setIndexProgress] = useState(0);
+  const [indexMsg, setIndexMsg]     = useState("");
+  const [searchIndex, setSearchIndex] = useState({}); // { filename: [{page, text}] }
+  const [caseSensitive, setCaseSensitive] = useState(false);
+  const [wholeWord, setWholeWord]   = useState(false);
+  const [filterFile, setFilterFile] = useState("all");
+  const [lastQuery, setLastQuery]   = useState("");
 
-  const mockSearch = () => {
-    if (!query.trim()) return;
+  const pdfFiles = files.filter(f => f.name?.toLowerCase().endsWith(".pdf") && f.raw);
+
+  // ── Build full-text index across all PDFs ────────────────────────────────────
+  const buildIndex = async () => {
+    if (pdfFiles.length === 0) {
+      onToast("Upload some PDF files first.", "error");
+      return;
+    }
+    setIndexing(true);
+    setIndexed(false);
+    setSearchIndex({});
+    setResults([]);
+    setIndexProgress(0);
+
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        (window.location.origin || "") + "/pdf.worker.min.js";
+
+      const newIndex = {};
+
+      for (let fi = 0; fi < pdfFiles.length; fi++) {
+        const file = pdfFiles[fi];
+        setIndexMsg(`Indexing ${file.name} (${fi + 1}/${pdfFiles.length})…`);
+        setIndexProgress(Math.round((fi / pdfFiles.length) * 90));
+
+        try {
+          const buffer = await file.raw.arrayBuffer();
+          const pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise;
+          const pages  = [];
+
+          for (let p = 1; p <= pdfDoc.numPages; p++) {
+            const page    = await pdfDoc.getPage(p);
+            const content = await page.getTextContent({ includeMarkedContent: false });
+
+            // ── Smart text joining ──────────────────────────────────────────
+            // PDF.js returns individual text runs. Some PDFs split every
+            // character into a separate run (e.g. "C","o","u","r","t").
+            // We need to decide whether to join runs with a space or directly.
+            //
+            // Rules:
+            //  1. Same Y line, consecutive X positions with no gap → concatenate
+            //  2. Same Y line, gap larger than ~1 character width → add space
+            //  3. Different Y → new line
+
+            // Group by Y position (rounded to 1pt to handle sub-pixel differences)
+            const lineMap = new Map();
+            content.items.forEach(item => {
+              if (!item.str) return; // keep spaces, filter only truly empty
+              const y = Math.round(item.transform[5]); // 1pt precision
+              if (!lineMap.has(y)) lineMap.set(y, []);
+              lineMap.get(y).push({
+                str:    item.str,
+                x:      item.transform[4],
+                width:  item.width || 0,
+                height: item.height || 10,
+              });
+            });
+
+            // Sort by Y descending (PDF origin is bottom-left)
+            const sortedYs = Array.from(lineMap.keys()).sort((a, b) => b - a);
+
+            const lines = sortedYs.map(y => {
+              // Sort items on this line by X position left-to-right
+              const items = lineMap.get(y).sort((a, b) => a.x - b.x);
+
+              // Smart join: concatenate items, inserting a space only when
+              // there is a visible gap between the end of one item and the
+              // start of the next
+              let line = "";
+              for (let i = 0; i < items.length; i++) {
+                const cur  = items[i];
+                const prev = items[i - 1];
+
+                if (i === 0) {
+                  line += cur.str;
+                  continue;
+                }
+
+                // Expected X of next character = prev.x + prev.width
+                const expectedX = prev.x + prev.width;
+                const actualX   = cur.x;
+                const gap       = actualX - expectedX;
+
+                // Threshold: if gap > ~30% of the average character width,
+                // insert a space. For character-by-character PDFs the gap
+                // will be near 0 so no space is added.
+                const avgCharW = prev.height * 0.45; // rough em width
+                if (gap > avgCharW * 0.3) {
+                  // Meaningful gap — add space unless the run already starts
+                  // with a space or the previous run ends with one
+                  if (!line.endsWith(" ") && !cur.str.startsWith(" ")) {
+                    line += " ";
+                  }
+                }
+
+                line += cur.str;
+              }
+
+              return line.trim();
+            }).filter(Boolean);
+
+            // Full page text (lines joined with newline for line-based search)
+            const text = lines.join("\n").trim();
+
+            // ── Also extract form field values from this page ─────────────────
+            // AcroForm field values live in the annotation layer, not in
+            // getTextContent(). We read them separately and append to the
+            // page text so searches hit filled-in form data too.
+            let formText = "";
+            try {
+              const annotations = await page.getAnnotations();
+              const fieldLines  = [];
+
+              annotations.forEach(ann => {
+                // Widget annotations are form fields
+                if (ann.subtype !== "Widget") return;
+
+                const fieldName  = ann.fieldName  || ann.alternativeText || "";
+                const fieldValue = ann.fieldValue || ann.buttonValue || "";
+
+                // Text fields, combo boxes, list boxes
+                if (typeof fieldValue === "string" && fieldValue.trim()) {
+                  fieldLines.push(fieldValue.trim());
+                  if (fieldName) fieldLines.push(`${fieldName}: ${fieldValue.trim()}`);
+                }
+
+                // Checkboxes and radio buttons
+                if (ann.fieldType === "Btn") {
+                  const checked = fieldValue !== "Off" && fieldValue !== "" && fieldValue !== null;
+                  if (checked && fieldName) {
+                    fieldLines.push(`${fieldName}: ${fieldValue}`);
+                  }
+                }
+
+                // Choice fields (dropdowns, list boxes) — selected options
+                if (ann.fieldType === "Ch" && ann.fieldValue) {
+                  const val = Array.isArray(ann.fieldValue)
+                    ? ann.fieldValue.join(", ")
+                    : ann.fieldValue;
+                  if (val.trim()) {
+                    fieldLines.push(val.trim());
+                    if (fieldName) fieldLines.push(`${fieldName}: ${val.trim()}`);
+                  }
+                }
+              });
+
+              if (fieldLines.length > 0) {
+                formText = fieldLines.filter(Boolean).join("\n");
+              }
+            } catch (annotErr) {
+              // Annotations not available — skip silently
+            }
+
+            // Merge page text and form values
+            const fullPageText = [text, formText].filter(Boolean).join("\n");
+            const allLines     = formText
+              ? [...lines, ...formText.split("\n").filter(Boolean)]
+              : lines;
+
+            if (fullPageText) pages.push({ page: p, text: fullPageText, lines: allLines });
+          }
+
+          newIndex[file.name] = pages;
+        } catch (err) {
+          console.warn(`Could not index ${file.name}:`, err.message);
+          newIndex[file.name] = [];
+        }
+      }
+
+      setSearchIndex(newIndex);
+      setIndexed(true);
+      setIndexing(false);
+      setIndexProgress(100);
+      setIndexMsg("");
+
+      const totalPages = Object.values(newIndex).reduce((sum, pages) => sum + pages.length, 0);
+      onToast(`✓ Indexed ${pdfFiles.length} file(s) — ${totalPages} pages including form fields`, "success");
+    } catch (err) {
+      console.error(err);
+      setIndexing(false);
+      setIndexMsg("");
+      onToast(`Indexing failed: ${err.message}`, "error");
+    }
+  };
+
+  // ── Highlight matching text in snippet ───────────────────────────────────────
+  const highlightText = (text, q) => {
+    if (!q) return text;
+    const flags = caseSensitive ? "g" : "gi";
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = wholeWord ? `\\b${escaped}\\b` : escaped;
+    try {
+      const parts = text.split(new RegExp(`(${pattern})`, flags));
+      return parts.map((part, i) => {
+        const isMatch = new RegExp(`^${pattern}$`, caseSensitive ? "" : "i").test(part);
+        return isMatch
+          ? `<mark style="background:#FFD700;color:#1A1A2A;border-radius:2px;padding:0 2px;">${part}</mark>`
+          : part;
+      }).join("");
+    } catch { return text; }
+  };
+
+  // ── Extract snippet and line number around the match ────────────────────────
+  const getSnippetAndLine = (text, lines, q) => {
+    const flags   = caseSensitive ? "" : "i";
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = wholeWord
+      ? new RegExp(`\\b${escaped}\\b`, flags)
+      : new RegExp(escaped, flags);
+
+    // Find which line the first match is on
+    let lineNum = null;
+    let lineSnippet = null;
+    if (lines) {
+      for (let i = 0; i < lines.length; i++) {
+        if (pattern.test(lines[i])) {
+          lineNum = i + 1; // 1-based line number
+          // Build snippet: show 1 line before and after for context
+          const contextLines = lines.slice(
+            Math.max(0, i - 1),
+            Math.min(lines.length, i + 3)
+          );
+          lineSnippet = contextLines.join(" ").trim();
+          break;
+        }
+      }
+    }
+
+    // Fall back to character-based snippet if no line found
+    if (!lineSnippet) {
+      const lower = caseSensitive ? text : text.toLowerCase();
+      const qLow  = caseSensitive ? q : q.toLowerCase();
+      const idx   = lower.indexOf(qLow);
+      const start = Math.max(0, idx - 80);
+      const end   = Math.min(text.length, idx + qLow.length + 120);
+      lineSnippet = (start > 0 ? "…" : "") + text.substring(start, end) + (end < text.length ? "…" : "");
+    }
+
+    return { snippet: lineSnippet, lineNum };
+  };
+
+  // ── Run the actual search ────────────────────────────────────────────────────
+  const doSearch = () => {
+    const q = query.trim();
+    if (!q) return;
+    if (!indexed) { onToast("Build the index first, then search.", "error"); return; }
     setSearching(true);
+    setLastQuery(q);
+
+    // Small timeout so UI updates before the search loop runs
     setTimeout(() => {
-      setResults([
-        { file: files[0]?.name || "document.pdf", page: 3, snippet: `...the term "${query}" appears in the context of business analysis...` },
-        { file: files[0]?.name || "document.pdf", page: 7, snippet: `...further examples of "${query}" are explored in this section...` },
-        { file: files[1]?.name || "report.pdf", page: 1, snippet: `...introduction references "${query}" as a key concept...` },
-      ]);
+      const matches = [];
+      const filesToSearch = filterFile === "all"
+        ? Object.entries(searchIndex)
+        : Object.entries(searchIndex).filter(([name]) => name === filterFile);
+
+      const flags   = caseSensitive ? "" : "i";
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = wholeWord
+        ? new RegExp(`\\b${escaped}\\b`, flags)
+        : new RegExp(escaped, flags);
+
+      for (const [filename, pages] of filesToSearch) {
+        for (const { page, text, lines } of pages) {
+          if (!pattern.test(text)) continue;
+          const allMatches = text.match(new RegExp(pattern.source, flags + "g")) || [];
+          const { snippet, lineNum } = getSnippetAndLine(text, lines, q);
+          matches.push({
+            filename,
+            page,
+            lineNum,
+            count: allMatches.length,
+            snippet,
+          });
+        }
+      }
+
+      // Sort by most matches first
+      matches.sort((a, b) => b.count - a.count);
+      setResults(matches);
       setSearching(false);
-    }, 800);
+    }, 50);
+  };
+
+  const totalIndexedPages = Object.values(searchIndex).reduce((s, p) => s + p.length, 0);
+
+  const inputStyle = {
+    background: COLORS.surface2, border: `1px solid ${COLORS.border}`,
+    borderRadius: 10, padding: "11px 16px 11px 44px",
+    color: COLORS.text, fontSize: 15, outline: "none",
+    boxSizing: "border-box", fontFamily: "inherit", width: "100%",
   };
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Full-Text Search</h2>
-      <div style={{ display: "flex", gap: 12, marginBottom: 24 }}>
-        <div style={{ flex: 1, position: "relative" }}>
-          <Icon d={icons.search} size={16} color={COLORS.textMuted} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && mockSearch()} placeholder="Search across all documents..."
-            style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "12px 16px 12px 44px", color: COLORS.text, fontSize: 15, outline: "none", boxSizing: "border-box" }} />
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 8px", letterSpacing: "-0.3px" }}>
+        Full-Text Search
+      </h2>
+      <p style={{ fontSize: 13, color: COLORS.textMuted, margin: "0 0 20px" }}>
+        Search across every page of every PDF in your workspace simultaneously.
+      </p>
+
+      {/* ── Index builder ── */}
+      <div style={{ background: COLORS.surface2, border: `1px solid ${indexed ? COLORS.success : COLORS.border}`, borderRadius: 14, padding: "16px 20px", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>
+              {indexed
+                ? `✓ Index ready — ${pdfFiles.length} file(s), ${totalIndexedPages} pages`
+                : "Build search index first"}
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 3 }}>
+              {indexed
+                ? "Re-index any time you add new files"
+                : `${pdfFiles.length} PDF file(s) in workspace ready to index`}
+            </div>
+          </div>
+          <Btn
+            onClick={buildIndex}
+            icon={icons.search}
+            disabled={indexing || pdfFiles.length === 0}
+            variant={indexed ? "secondary" : "primary"}
+          >
+            {indexing ? indexMsg || "Indexing…" : indexed ? "Re-index files" : "Build index"}
+          </Btn>
         </div>
-        <Btn onClick={mockSearch} icon={icons.search} disabled={searching || !query.trim()}>
-          {searching ? "Searching..." : "Search"}
+
+        {indexing && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+              <span>{indexMsg}</span><span>{indexProgress}%</span>
+            </div>
+            <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
+              <div style={{ width: `${indexProgress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.3s" }} />
+            </div>
+          </div>
+        )}
+
+        {pdfFiles.length === 0 && (
+          <div style={{ marginTop: 10, fontSize: 12, color: COLORS.gold }}>
+            ⚠ No PDF files in your workspace yet. Upload some PDFs first.
+          </div>
+        )}
+      </div>
+
+      {/* ── Search bar ── */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+        <div style={{ flex: 1, position: "relative" }}>
+          <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
+            <Icon d={icons.search} size={16} color={COLORS.textMuted} />
+          </div>
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && doSearch()}
+            placeholder={indexed ? "Search all documents… (press Enter)" : "Build index first…"}
+            disabled={!indexed}
+            style={inputStyle}
+          />
+        </div>
+        <Btn
+          onClick={doSearch}
+          icon={icons.search}
+          disabled={searching || !query.trim() || !indexed}
+        >
+          {searching ? "Searching…" : "Search"}
         </Btn>
       </div>
 
+      {/* ── Search options ── */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: COLORS.textMuted, userSelect: "none" }}>
+          <input type="checkbox" checked={caseSensitive} onChange={e => setCaseSensitive(e.target.checked)} />
+          Case sensitive
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: COLORS.textMuted, userSelect: "none" }}>
+          <input type="checkbox" checked={wholeWord} onChange={e => setWholeWord(e.target.checked)} />
+          Whole word only
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <span style={{ fontSize: 12, color: COLORS.textMuted }}>Filter by file:</span>
+          <select
+            value={filterFile}
+            onChange={e => setFilterFile(e.target.value)}
+            style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "4px 8px", color: COLORS.text, fontSize: 12, outline: "none", fontFamily: "inherit" }}
+          >
+            <option value="all">All files</option>
+            {pdfFiles.map((f, i) => <option key={i} value={f.name}>{f.name}</option>)}
+          </select>
+        </div>
+        {results.length > 0 && (
+          <button onClick={() => { setResults([]); setLastQuery(""); }} style={{ background: "transparent", border: "none", color: COLORS.textMuted, cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+            ✕ Clear results
+          </button>
+        )}
+      </div>
+
+      {/* ── Results ── */}
       {results.length > 0 && (
         <>
-          <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 14 }}>{results.length} results found for "<b style={{ color: COLORS.text }}>{query}</b>"</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, color: COLORS.textMuted }}>
+              <b style={{ color: COLORS.text }}>{results.length}</b> result{results.length !== 1 ? "s" : ""} for{" "}
+              "<b style={{ color: COLORS.accent }}>{lastQuery}</b>"
+              {filterFile !== "all" && <span> in <b style={{ color: COLORS.text }}>{filterFile}</b></span>}
+            </div>
+            <div style={{ fontSize: 11, color: COLORS.textDim }}>
+              {results.reduce((s, r) => s + r.count, 0)} total match{results.reduce((s,r)=>s+r.count,0)!==1?"es":""}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {results.map((r, i) => (
-              <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "16px 20px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Icon d={icons.file} size={16} color={COLORS.accent} />
-                    <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{r.file}</span>
+              <div
+                key={i}
+                style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "14px 18px", cursor: "pointer", transition: "border-color 0.12s" }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = COLORS.accent}
+                onMouseLeave={e => e.currentTarget.style.borderColor = COLORS.border}
+                onClick={() => {
+                  const file = files.find(f => f.name === r.filename);
+                  if (file && onView) onView(file);
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8, gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <Icon d={icons.file} size={15} color={COLORS.accent} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.filename}
+                    </span>
                   </div>
-                  <span style={{ fontSize: 11, color: COLORS.textMuted, background: COLORS.surface3, padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>Page {r.page}</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                    {r.count > 1 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, background: COLORS.accentSoft, color: COLORS.accent, border: `1px solid ${COLORS.accent}`, borderRadius: 100, padding: "2px 7px" }}>
+                        {r.count}×
+                      </span>
+                    )}
+                    <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.textMuted, background: COLORS.surface3, padding: "3px 10px", borderRadius: 20 }}>
+                      Page {r.page}
+                    </span>
+                    {r.lineNum && (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.teal, background: COLORS.tealSoft, padding: "3px 10px", borderRadius: 20, border: `1px solid ${COLORS.teal}30` }}>
+                        Line {r.lineNum}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <p style={{ margin: 0, fontSize: 13, color: COLORS.textMuted, lineHeight: 1.6 }}>{r.snippet}</p>
+                <p
+                  style={{ margin: 0, fontSize: 12, color: COLORS.textMuted, lineHeight: 1.7, fontFamily: "Georgia, serif" }}
+                  dangerouslySetInnerHTML={{ __html: highlightText(r.snippet, lastQuery) }}
+                />
+                <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontSize: 11, color: COLORS.textDim }}>
+                    Click to open in viewer
+                  </div>
+                  <div style={{ fontSize: 11, color: COLORS.textDim }}>
+                    {r.lineNum ? `Page ${r.page}, Line ${r.lineNum}` : `Page ${r.page}`}
+                    {r.count > 1 ? ` · ${r.count} matches on this page` : ""}
+                  </div>
+                </div>
               </div>
             ))}
           </div>
         </>
       )}
 
-      {results.length === 0 && !searching && query && (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.textDim }}>
-          <Icon d={icons.search} size={36} color={COLORS.textDim} />
-          <p style={{ margin: "16px 0 0" }}>No results found. Try a different search term.</p>
+      {/* ── No results ── */}
+      {results.length === 0 && !searching && lastQuery && (
+        <div style={{ textAlign: "center", padding: "48px 20px", color: COLORS.textDim }}>
+          <Icon d={icons.search} size={40} color={COLORS.textDim} />
+          <p style={{ margin: "16px 0 6px", fontSize: 15, fontWeight: 600, color: COLORS.text }}>
+            No results found
+          </p>
+          <p style={{ margin: 0, fontSize: 13, maxWidth: 300, lineHeight: 1.6 }}>
+            No pages matched "<b style={{ color: COLORS.text }}>{lastQuery}</b>".
+            Try a different term, uncheck case-sensitive, or re-index your files.
+          </p>
+        </div>
+      )}
+
+      {/* ── Empty state ── */}
+      {!lastQuery && !indexing && (
+        <div style={{ textAlign: "center", padding: "48px 20px", color: COLORS.textDim }}>
+          <Icon d={icons.search} size={40} color={COLORS.textDim} />
+          <p style={{ margin: "16px 0 6px", fontSize: 15, fontWeight: 600, color: COLORS.text }}>
+            {indexed ? "Ready to search" : "Build the index to get started"}
+          </p>
+          <p style={{ margin: 0, fontSize: 13, color: COLORS.textMuted, maxWidth: 320, lineHeight: 1.6 }}>
+            {indexed
+              ? `${totalIndexedPages} pages indexed across ${pdfFiles.length} file(s) — includes form field values. Type a search term above and press Enter.`
+              : "Click Build index above to scan all your PDFs. This only takes a few seconds and you only need to do it once per session."}
+          </p>
         </div>
       )}
     </div>
@@ -2241,97 +3675,527 @@ const SearchSection = ({ files, onToast }) => {
 
 // ─── Section: Export & Cloud ──────────────────────────────────────────────────
 const ExportSection = ({ files, onToast }) => {
-  const clouds = [
-    { name: "Google Drive", icon: "🟡", color: "#4285F4", connected: false },
-    { name: "Dropbox", icon: "📦", color: "#0061FF", connected: true },
-    { name: "OneDrive", icon: "☁️", color: "#0078D4", connected: false },
-  ];
+  // ── Cloud connection state ───────────────────────────────────────────────────
+  const [clouds, setClouds] = useState({
+    gdrive:   { name: "Google Drive",  icon: "\uD83D\uDFE1", color: "#4285F4", connected: false, token: null, uploading: false },
+    dropbox:  { name: "Dropbox",       icon: "\uD83D\uDCE6", color: "#0061FF", connected: false, token: null, uploading: false },
+    onedrive: { name: "OneDrive",      icon: "\u2601\uFE0F",  color: "#0078D4", connected: false, token: null, uploading: false },
+  });
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [uploadResults, setUploadResults] = useState([]);
+
+  const pdfFiles = files.filter(f => f.name?.toLowerCase().endsWith(".pdf"));
+
+  // ── Config — users fill these in with their own API credentials ─────────────
+  // Instructions shown in the UI below
+  const CONFIG = {
+    gdrive: {
+      clientId:    "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+      scope:       "https://www.googleapis.com/auth/drive.file",
+      discoveryDoc:"https://www.googleapis.com/discovery/v1/apis/drive/v3/rest",
+    },
+    dropbox: {
+      clientId:    "YOUR_DROPBOX_APP_KEY",
+      redirectUri: window.location.origin + window.location.pathname,
+    },
+    onedrive: {
+      clientId:    "YOUR_AZURE_CLIENT_ID",
+      tenantId:    "common",
+      scope:       "Files.ReadWrite openid profile",
+      redirectUri: window.location.origin + window.location.pathname,
+    },
+  };
+
+  const toggleFile = (f) =>
+    setSelectedFiles(s => s.includes(f) ? s.filter(x => x !== f) : [...s, f]);
+
+  // ── Download helper (always works) ──────────────────────────────────────────
+  const downloadFile = (file) => {
+    if (!file.raw) { onToast("No file data to download.", "error"); return; }
+    const url = URL.createObjectURL(file.raw);
+    const a   = document.createElement("a");
+    a.href = url; a.download = file.name; a.click();
+    URL.revokeObjectURL(url);
+    onToast(`\u2713 "${file.name}" downloaded!`, "success");
+  };
+
+  const downloadAll = () => {
+    const toDownload = selectedFiles.length > 0 ? selectedFiles : pdfFiles;
+    if (toDownload.length === 0) { onToast("No files to download.", "error"); return; }
+    toDownload.forEach((f, i) => setTimeout(() => downloadFile(f), i * 150));
+  };
+
+  // ── Google Drive OAuth + Upload ──────────────────────────────────────────────
+  const connectGDrive = () => {
+    const cfg = CONFIG.gdrive;
+    if (cfg.clientId.startsWith("YOUR_")) {
+      showSetupGuide("gdrive"); return;
+    }
+    // Load Google Identity Services
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.onload = () => {
+      window.google.accounts.oauth2.initTokenClient({
+        client_id: cfg.clientId,
+        scope:     cfg.scope,
+        callback:  (resp) => {
+          if (resp.access_token) {
+            setClouds(c => ({ ...c, gdrive: { ...c.gdrive, connected: true, token: resp.access_token } }));
+            onToast("\u2713 Connected to Google Drive!", "success");
+          }
+        },
+      }).requestAccessToken();
+    };
+    document.head.appendChild(script);
+  };
+
+  const uploadToGDrive = async (file) => {
+    const token = clouds.gdrive.token;
+    if (!token || !file.raw) return false;
+    setClouds(c => ({ ...c, gdrive: { ...c.gdrive, uploading: true } }));
+    try {
+      const meta = JSON.stringify({ name: file.name, mimeType: "application/pdf" });
+      const form = new FormData();
+      form.append("metadata", new Blob([meta], { type: "application/json" }));
+      form.append("file", file.raw);
+      const res = await fetch(
+        "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
+        { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setClouds(c => ({ ...c, gdrive: { ...c.gdrive, uploading: false } }));
+      return { name: file.name, link: `https://drive.google.com/file/d/${data.id}/view` };
+    } catch (err) {
+      setClouds(c => ({ ...c, gdrive: { ...c.gdrive, uploading: false } }));
+      throw err;
+    }
+  };
+
+  // ── Dropbox OAuth + Upload ───────────────────────────────────────────────────
+  const connectDropbox = () => {
+    const cfg = CONFIG.dropbox;
+    if (cfg.clientId.startsWith("YOUR_")) {
+      showSetupGuide("dropbox"); return;
+    }
+    const authUrl = `https://www.dropbox.com/oauth2/authorize` +
+      `?client_id=${cfg.clientId}` +
+      `&response_type=token` +
+      `&redirect_uri=${encodeURIComponent(cfg.redirectUri)}`;
+    // Open OAuth popup
+    const popup = window.open(authUrl, "dropbox-auth", "width=600,height=700");
+    // Listen for redirect with token in hash
+    const timer = setInterval(() => {
+      try {
+        const hash = popup?.location?.hash;
+        if (hash && hash.includes("access_token")) {
+          clearInterval(timer);
+          popup.close();
+          const params = new URLSearchParams(hash.slice(1));
+          const token  = params.get("access_token");
+          if (token) {
+            setClouds(c => ({ ...c, dropbox: { ...c.dropbox, connected: true, token } }));
+            onToast("\u2713 Connected to Dropbox!", "success");
+          }
+        }
+      } catch { /* cross-origin — keep waiting */ }
+    }, 500);
+  };
+
+  const uploadToDropbox = async (file) => {
+    const token = clouds.dropbox.token;
+    if (!token || !file.raw) return false;
+    setClouds(c => ({ ...c, dropbox: { ...c.dropbox, uploading: true } }));
+    try {
+      const res = await fetch("https://content.dropboxapi.com/2/files/upload", {
+        method:  "POST",
+        headers: {
+          "Authorization":   `Bearer ${token}`,
+          "Content-Type":    "application/octet-stream",
+          "Dropbox-API-Arg": JSON.stringify({
+            path: `/${file.name}`,
+            mode: "overwrite",
+            autorename: true,
+          }),
+        },
+        body: file.raw,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setClouds(c => ({ ...c, dropbox: { ...c.dropbox, uploading: false } }));
+      return { name: file.name, link: `https://www.dropbox.com/home${data.path_display}` };
+    } catch (err) {
+      setClouds(c => ({ ...c, dropbox: { ...c.dropbox, uploading: false } }));
+      throw err;
+    }
+  };
+
+  // ── OneDrive OAuth + Upload ──────────────────────────────────────────────────
+  const connectOneDrive = () => {
+    const cfg = CONFIG.onedrive;
+    if (cfg.clientId.startsWith("YOUR_")) {
+      showSetupGuide("onedrive"); return;
+    }
+    const authUrl = `https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/authorize` +
+      `?client_id=${cfg.clientId}` +
+      `&response_type=token` +
+      `&scope=${encodeURIComponent(cfg.scope)}` +
+      `&redirect_uri=${encodeURIComponent(cfg.redirectUri)}`;
+    const popup = window.open(authUrl, "onedrive-auth", "width=600,height=700");
+    const timer = setInterval(() => {
+      try {
+        const hash = popup?.location?.hash;
+        if (hash && hash.includes("access_token")) {
+          clearInterval(timer);
+          popup.close();
+          const params = new URLSearchParams(hash.slice(1));
+          const token  = params.get("access_token");
+          if (token) {
+            setClouds(c => ({ ...c, onedrive: { ...c.onedrive, connected: true, token } }));
+            onToast("\u2713 Connected to OneDrive!", "success");
+          }
+        }
+      } catch { /* cross-origin */ }
+    }, 500);
+  };
+
+  const uploadToOneDrive = async (file) => {
+    const token = clouds.onedrive.token;
+    if (!token || !file.raw) return false;
+    setClouds(c => ({ ...c, onedrive: { ...c.onedrive, uploading: true } }));
+    try {
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(file.name)}:/content`,
+        {
+          method:  "PUT",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type":  "application/pdf",
+          },
+          body: file.raw,
+        }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setClouds(c => ({ ...c, onedrive: { ...c.onedrive, uploading: false } }));
+      return { name: file.name, link: data.webUrl };
+    } catch (err) {
+      setClouds(c => ({ ...c, onedrive: { ...c.onedrive, uploading: false } }));
+      throw err;
+    }
+  };
+
+  // ── Upload selected files to a cloud service ─────────────────────────────────
+  const uploadToCloud = async (service) => {
+    const toUpload = selectedFiles.length > 0 ? selectedFiles : pdfFiles;
+    if (toUpload.length === 0) { onToast("Select files to upload.", "error"); return; }
+    const uploaders = { gdrive: uploadToGDrive, dropbox: uploadToDropbox, onedrive: uploadToOneDrive };
+    const uploader  = uploaders[service];
+    const cloudName = clouds[service].name;
+    const results   = [];
+    let   errors    = 0;
+
+    for (const file of toUpload) {
+      try {
+        onToast(`Uploading "${file.name}" to ${cloudName}…`, "");
+        const result = await uploader(file);
+        if (result) results.push(result);
+      } catch (err) {
+        errors++;
+        console.error(err);
+      }
+    }
+
+    if (results.length > 0) {
+      setUploadResults(prev => [...results, ...prev]);
+      onToast(`\u2713 ${results.length} file(s) uploaded to ${cloudName}!`, "success");
+    }
+    if (errors > 0) {
+      onToast(`${errors} file(s) failed to upload. Check your connection.`, "error");
+    }
+  };
+
+  // ── Setup guide modal state ──────────────────────────────────────────────────
+  const [setupGuide, setSetupGuide] = useState(null);
+  const showSetupGuide = (service) => setSetupGuide(service);
+
+  const setupSteps = {
+    gdrive: {
+      title: "Connect Google Drive",
+      color: "#4285F4",
+      steps: [
+        "Go to console.cloud.google.com and create a new project",
+        "Enable the Google Drive API under APIs & Services → Library",
+        "Go to APIs & Services → Credentials → Create OAuth 2.0 Client ID",
+        "Set Application Type to 'Web application'",
+        `Add ${window.location.origin} to Authorized JavaScript Origins`,
+        "Copy your Client ID",
+        `Open src/PDFMasterApp.jsx, find CONFIG.gdrive.clientId and replace "YOUR_GOOGLE_CLIENT_ID..." with your Client ID`,
+        "Save the file, run npm start, then click Connect again",
+      ],
+    },
+    dropbox: {
+      title: "Connect Dropbox",
+      color: "#0061FF",
+      steps: [
+        "Go to dropbox.com/developers and click Create app",
+        "Choose Scoped access → Full Dropbox → give it a name",
+        "On the app settings page, go to the Permissions tab",
+        "Enable files.content.write and files.content.read",
+        `Under OAuth 2 → Redirect URIs, add: ${window.location.origin + window.location.pathname}`,
+        "Copy your App key from the Settings tab",
+        `Open src/PDFMasterApp.jsx, find CONFIG.dropbox.clientId and replace "YOUR_DROPBOX_APP_KEY" with your App key`,
+        "Save the file, run npm start, then click Connect again",
+      ],
+    },
+    onedrive: {
+      title: "Connect OneDrive",
+      color: "#0078D4",
+      steps: [
+        "Go to portal.azure.com and sign in with your Microsoft account",
+        "Go to Azure Active Directory → App registrations → New registration",
+        "Set a name, choose 'Accounts in any organizational directory and personal Microsoft accounts'",
+        `Set Redirect URI to: ${window.location.origin + window.location.pathname}`,
+        "Go to API permissions → Add a permission → Microsoft Graph → Delegated → Files.ReadWrite",
+        "Copy your Application (client) ID from the Overview page",
+        `Open src/PDFMasterApp.jsx, find CONFIG.onedrive.clientId and replace "YOUR_AZURE_CLIENT_ID" with your Client ID`,
+        "Save the file, run npm start, then click Connect again",
+      ],
+    },
+  };
+
+  const inputStyle = {
+    width: "100%", background: COLORS.surface,
+    border: `1px solid ${COLORS.border}`, borderRadius: 9,
+    padding: "8px 12px", color: COLORS.text, fontSize: 13,
+    outline: "none", boxSizing: "border-box", fontFamily: "inherit",
+  };
+
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 20px", letterSpacing: "-0.3px" }}>Export & Cloud Storage</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: "0 0 8px", letterSpacing: "-0.3px" }}>
+        Export & Cloud Storage
+      </h2>
+      <p style={{ fontSize: 13, color: COLORS.textMuted, margin: "0 0 24px" }}>
+        Download files to your device or upload directly to cloud storage.
+      </p>
+
+      {/* Setup guide modal */}
+      {setupGuide && setupSteps[setupGuide] && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }} onClick={() => setSetupGuide(null)}>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, width: 560, maxWidth: "95vw", maxHeight: "85vh", overflow: "auto", padding: 28, boxShadow: "0 24px 64px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: setupSteps[setupGuide].color }}>
+                {setupSteps[setupGuide].title} — Setup Guide
+              </h3>
+              <button onClick={() => setSetupGuide(null)} style={{ background: COLORS.surface3, border: "none", color: COLORS.textMuted, cursor: "pointer", borderRadius: 8, width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit", fontSize: 16 }}>✕</button>
+            </div>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 18px", lineHeight: 1.6 }}>
+              Cloud integrations require you to register a free developer app with each service. This is a one-time setup that takes about 5 minutes. Your credentials are only stored locally in your code.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {setupSteps[setupGuide].steps.map((step, i) => (
+                <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", background: setupSteps[setupGuide].color, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, flexShrink: 0, marginTop: 1 }}>{i + 1}</div>
+                  <div style={{ fontSize: 13, color: COLORS.text, lineHeight: 1.6, flex: 1 }}>{step}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 20, background: COLORS.surface, borderRadius: 10, padding: "12px 16px", fontSize: 12, color: COLORS.textMuted, lineHeight: 1.6 }}>
+              💡 Once your Client ID is in the code and the app is restarted, the Connect button will open an official OAuth login popup from {setupSteps[setupGuide].title.split(" ")[1]}. No passwords are stored in PDF Master.
+            </div>
+            <button onClick={() => setSetupGuide(null)} style={{ marginTop: 16, background: setupSteps[setupGuide].color, color: "#fff", border: "none", borderRadius: 9, padding: "10px 24px", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", width: "100%" }}>
+              Got it — I'll set it up
+            </button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+
+        {/* ── Left: File selection + download ── */}
         <div>
-          <h3 style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Export Files</h3>
-          {files.length === 0 ? (
-            <div style={{ background: COLORS.surface2, border: `1px dashed ${COLORS.border}`, borderRadius: 12, padding: "30px", textAlign: "center", color: COLORS.textDim, fontSize: 13 }}>No files to export</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {files.map((f, i) => (
-                <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 14 }}>
-                  <Icon d={icons.file} size={18} color={COLORS.accent} />
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</span>
-                  <Btn variant="secondary" small icon={icons.download} onClick={() => onToast(`Downloading "${f.name}"...`, "success")}>Download</Btn>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>
+              Select files to export
+            </h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 14px" }}>
+              Check files below then download or upload to cloud. Leave all unchecked to export all files.
+            </p>
+
+            {pdfFiles.length === 0 ? (
+              <div style={{ fontSize: 12, color: COLORS.textDim, padding: "20px", background: COLORS.surface, borderRadius: 8, border: `1px dashed ${COLORS.border}`, textAlign: "center" }}>
+                No PDF files in workspace yet
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 300, overflowY: "auto" }}>
+                {pdfFiles.map((f, i) => (
+                  <div key={i} onClick={() => toggleFile(f)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: selectedFiles.includes(f) ? COLORS.accentSoft : COLORS.surface, border: `1.5px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 9, cursor: "pointer", transition: "all 0.12s" }}>
+                    <div style={{ width: 18, height: 18, border: `2px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 4, background: selectedFiles.includes(f) ? COLORS.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {selectedFiles.includes(f) && <Icon d={icons.check} size={11} color={COLORS.white} />}
+                    </div>
+                    <Icon d={icons.file} size={15} color={COLORS.accent} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</div>
+                      <div style={{ fontSize: 11, color: COLORS.textMuted }}>{typeof f.size === "number" ? `${(f.size / 1024).toFixed(1)} KB` : f.size || "—"}</div>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); downloadFile(f); }}
+                      style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 11, color: COLORS.textMuted, fontFamily: "inherit", flexShrink: 0 }}
+                    >
+                      ↓
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {pdfFiles.length > 0 && (
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <Btn onClick={downloadAll} icon={icons.download} variant="secondary" style={{ flex: 1, justifyContent: "center" }}>
+                  {selectedFiles.length > 0
+                    ? `Download ${selectedFiles.length} selected`
+                    : `Download all (${pdfFiles.length})`}
+                </Btn>
+                {selectedFiles.length > 0 && (
+                  <Btn variant="ghost" small onClick={() => setSelectedFiles([])}>Clear</Btn>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Upload results */}
+          {uploadResults.length > 0 && (
+            <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 10 }}>
+                Recently uploaded
+              </div>
+              {uploadResults.slice(0, 8).map((r, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: i < uploadResults.length - 1 ? `1px solid ${COLORS.border}` : "none" }}>
+                  <span style={{ color: COLORS.success, fontSize: 13 }}>✓</span>
+                  <span style={{ flex: 1, fontSize: 12, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+                  {r.link && (
+                    <a href={r.link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: COLORS.accent, fontWeight: 700, textDecoration: "none", flexShrink: 0 }}>
+                      Open ↗
+                    </a>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
 
+        {/* ── Right: Cloud storage ── */}
         <div>
-          <h3 style={{ margin: "0 0 14px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Cloud Storage</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {clouds.map((c, i) => (
-              <div key={i} style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px", display: "flex", alignItems: "center", gap: 14 }}>
-                <span style={{ fontSize: 24 }}>{c.icon}</span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{c.name}</div>
-                  <div style={{ fontSize: 11, color: c.connected ? COLORS.success : COLORS.textDim }}>{c.connected ? "✓ Connected" : "Not connected"}</div>
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px", marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 6px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Cloud storage</h3>
+            <p style={{ fontSize: 12, color: COLORS.textMuted, margin: "0 0 16px" }}>
+              Connect your cloud account to upload PDFs directly. First time requires a one-time developer app setup.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {Object.entries(clouds).map(([key, cloud]) => (
+                <div key={key} style={{ background: COLORS.surface, border: `1.5px solid ${cloud.connected ? cloud.color + "60" : COLORS.border}`, borderRadius: 12, padding: "14px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 22, flexShrink: 0 }}>{cloud.icon}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.text }}>{cloud.name}</div>
+                      <div style={{ fontSize: 11, marginTop: 2 }}>
+                        {cloud.connected
+                          ? <span style={{ color: COLORS.success, fontWeight: 600 }}>✓ Connected</span>
+                          : <span style={{ color: COLORS.textDim }}>Not connected — click Setup to get started</span>}
+                      </div>
+                    </div>
+                    {cloud.connected ? (
+                      <button
+                        onClick={() => setClouds(c => ({ ...c, [key]: { ...c[key], connected: false, token: null } }))}
+                        style={{ background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, color: COLORS.textMuted, fontFamily: "inherit" }}
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={() => showSetupGuide(key)}
+                          style={{ background: "transparent", border: `1px solid ${COLORS.border}`, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, color: COLORS.textMuted, fontFamily: "inherit" }}
+                        >
+                          Setup
+                        </button>
+                        <button
+                          onClick={() => {
+                            const connectors = { gdrive: connectGDrive, dropbox: connectDropbox, onedrive: connectOneDrive };
+                            connectors[key]();
+                          }}
+                          style={{ background: cloud.color, color: "#fff", border: "none", borderRadius: 7, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}
+                        >
+                          Connect
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Upload button when connected */}
+                  {cloud.connected && (
+                    <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${COLORS.border}` }}>
+                      <button
+                        onClick={() => uploadToCloud(key)}
+                        disabled={cloud.uploading}
+                        style={{
+                          width: "100%", background: cloud.uploading ? COLORS.surface3 : cloud.color + "20",
+                          color: cloud.uploading ? COLORS.textMuted : cloud.color,
+                          border: `1px solid ${cloud.color}50`,
+                          borderRadius: 8, padding: "8px 0", cursor: cloud.uploading ? "not-allowed" : "pointer",
+                          fontSize: 12, fontWeight: 700, fontFamily: "inherit", transition: "all 0.12s",
+                        }}
+                      >
+                        {cloud.uploading
+                          ? "Uploading\u2026"
+                          : selectedFiles.length > 0
+                            ? `Upload ${selectedFiles.length} selected file(s) to ${cloud.name}`
+                            : `Upload all ${pdfFiles.length} file(s) to ${cloud.name}`}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <Btn variant={c.connected ? "secondary" : "primary"} small onClick={() => onToast(c.connected ? `Disconnected from ${c.name}` : `Connected to ${c.name}!`, "success")}>
-                  {c.connected ? "Disconnect" : "Connect"}
-                </Btn>
+              ))}
+            </div>
+          </div>
+
+          {/* Print settings */}
+          <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 14, padding: "16px 18px" }}>
+            <h3 style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>
+              <Icon d={icons.print} size={15} color={COLORS.textMuted} /> Print
+            </h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Page range</label>
+                <input type="text" placeholder="All pages" style={inputStyle} />
               </div>
-            ))}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: COLORS.textMuted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".4px" }}>Copies</label>
+                <input type="number" defaultValue={1} min={1} style={inputStyle} />
+              </div>
+            </div>
+            <Btn
+              variant="secondary"
+              icon={icons.print}
+              style={{ width: "100%", justifyContent: "center" }}
+              onClick={() => {
+                const toPrint = selectedFiles.length > 0 ? selectedFiles[0] : pdfFiles[0];
+                if (!toPrint?.raw) { onToast("Select a file to print.", "error"); return; }
+                const url = URL.createObjectURL(toPrint.raw);
+                const win = window.open(url);
+                win?.addEventListener("load", () => { win.print(); URL.revokeObjectURL(url); });
+              }}
+            >
+              Print {selectedFiles.length === 1 ? `"${selectedFiles[0].name}"` : "selected file"}
+            </Btn>
           </div>
         </div>
       </div>
     </div>
   );
 };
-
-// ─── Section: View Files ──────────────────────────────────────────────────────
-const ViewSection = ({ files, onAddFiles, onView, onRemove }) => (
-  <div>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: COLORS.text, margin: 0, letterSpacing: "-0.3px" }}>File Manager</h2>
-      <Btn icon={icons.upload} onClick={() => document.getElementById("main-file-input")?.click()}>Upload Files</Btn>
-    </div>
-    <DropZone onFiles={onAddFiles} label="Drop a PDF here or click to upload — it will open automatically" />
-    <div style={{ marginTop: 20 }}>
-      {files.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: COLORS.textDim }}>
-          <Icon d={icons.file} size={48} color={COLORS.textDim} />
-          <p style={{ margin: "16px 0 0", fontSize: 14 }}>No files yet. Upload a PDF to get started.</p>
-          <p style={{ margin: "8px 0 0", fontSize: 12, color: COLORS.textDim }}>Drag and drop a file above or click Upload Files</p>
-        </div>
-      ) : (
-        <>
-          <p style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 12 }}>
-            Click any file to open it in the viewer
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {files.map((f, i) => (
-              <FileCard
-                key={i}
-                file={f}
-                onView={onView}
-                onRemove={() => onRemove(f)}
-                onDownload={() => {
-                  if (f.raw) {
-                    const url = URL.createObjectURL(f.raw);
-                    const a = document.createElement("a");
-                    a.href = url; a.download = f.name; a.click();
-                    URL.revokeObjectURL(url);
-                  }
-                }}
-              />
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  </div>
-);
 
 // ─── Main Application ─────────────────────────────────────────────────────────
 export default function PDFMasterApp() {
@@ -2406,64 +4270,99 @@ export default function PDFMasterApp() {
 
   // Used by the global drop handler — defined before addFiles to avoid circular ref
   const addFilesGlobal = useCallback((rawFiles) => {
-    const mapped = rawFiles
-      .filter(f => f instanceof File)
-      .map(f => ({
-        name:     f.name,
-        size:     f.size,
-        pages:    "—",
-        modified: "Just now",
-        raw:      f,
-      }));
-    if (mapped.length === 0) return;
+    const PDF_TYPES   = ["application/pdf"];
+    const IMAGE_TYPES = ["image/jpeg","image/png","image/webp","image/gif","image/tiff"];
+    const OFFICE_TYPES = [
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+    ];
+
+    // Separate PDFs from other files
+    const pdfs   = rawFiles.filter(f => f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf"));
+    const images = rawFiles.filter(f => IMAGE_TYPES.includes(f.type) || /\.(jpg|jpeg|png|webp|gif|tiff?)$/i.test(f.name));
+    const office = rawFiles.filter(f => OFFICE_TYPES.includes(f.type) || /\.(docx?|xlsx?|pptx?)$/i.test(f.name));
+    const other  = rawFiles.filter(f => !pdfs.includes(f) && !images.includes(f) && !office.includes(f));
+
+    // Warn about office files
+    if (office.length > 0) {
+      const names = office.map(f => f.name).join(", ");
+      setToast({ msg: `"${names}" can't be opened in the viewer. Go to Convert → Images→PDF or use CloudConvert for Office files.`, type: "error" });
+      setTimeout(() => setToast(null), 6000);
+    }
+
+    // Add all valid files to workspace (PDFs + images + others)
+    const validFiles = [...pdfs, ...images, ...other].filter(f => f instanceof File);
+    if (validFiles.length === 0) return;
+
+    const mapped = validFiles.map(f => ({
+      name:     f.name,
+      size:     f.size,
+      pages:    "—",
+      modified: "Just now",
+      raw:      f,
+    }));
+
     setFiles(prev => {
       const existing = new Set(prev.map(x => x.name));
-      const fresh = mapped.filter(m => !existing.has(m.name));
+      const fresh    = mapped.filter(m => !existing.has(m.name));
       return [...prev, ...fresh];
     });
-    setToast({ msg: `${mapped.length} file(s) added to workspace`, type: "success" });
-    setTimeout(() => setToast(null), 3500);
-    // Auto-open single file in viewer
-    if (mapped.length === 1 && mapped[0].raw) {
+
+    if (office.length === 0) {
+      setToast({ msg: `${validFiles.length} file(s) added to workspace`, type: "success" });
+      setTimeout(() => setToast(null), 3500);
+    }
+
+    // Auto-open single PDF in viewer
+    if (pdfs.length === 1 && validFiles.length === 1) {
       setTimeout(() => setViewerFile(mapped[0]), 300);
     }
   }, []);
 
   const addFiles = useCallback((newFiles) => {
-    // newFiles can be File objects (from input/drop) or already-mapped objects (from CreateSection)
+    const OFFICE_EXTS = /\.(docx?|xlsx?|pptx?)$/i;
+
+    // newFiles can be File objects or already-mapped objects from CreateSection
     const mapped = newFiles.map(f => {
-      // Already a mapped object with a name property — came from CreateSection
-      if (f && typeof f === "object" && !(f instanceof File) && f.name && f.raw) {
-        return f;
-      }
-      // Raw File object from drag-and-drop or file input
+      // Already a mapped object with raw attached — from CreateSection
+      if (f && !(f instanceof File) && f.name && f.raw) return f;
+      // Raw File object
       if (f instanceof File) {
+        // Warn about office files trying to be added as viewable PDFs
+        if (OFFICE_EXTS.test(f.name)) {
+          showToast(`"${f.name}" is an Office file. Go to Convert to turn it into a PDF first.`, "error");
+          return null;
+        }
         return {
-          name: f.name,
-          size: f.size,
-          pages: "—",
+          name:     f.name,
+          size:     f.size,
+          pages:    "—",
           modified: "Just now",
-          raw: f,
+          raw:      f,
         };
       }
       return f;
-    });
+    }).filter(Boolean);
+
+    if (mapped.length === 0) return;
 
     setFiles(prev => {
-      // Avoid adding duplicates by name
       const existing = new Set(prev.map(x => x.name));
-      const fresh = mapped.filter(m => !existing.has(m.name));
+      const fresh    = mapped.filter(m => !existing.has(m.name));
       return [...prev, ...fresh];
     });
 
-    showToast(`${newFiles.length} file(s) added to workspace!`, "success");
+    // Only show success if we actually added something
+    const pdfsAdded = mapped.filter(m => m.name?.toLowerCase().endsWith(".pdf"));
+    if (pdfsAdded.length > 0) {
+      showToast(`${mapped.length} file(s) added to workspace!`, "success");
+    }
 
-    // Auto-open in viewer when a single PDF is uploaded or added
-    if (newFiles.length === 1) {
-      const entry = mapped[0];
-      if (entry && (entry.raw || entry.url)) {
-        setTimeout(() => setViewerFile(entry), 300);
-      }
+    // Auto-open single PDF in viewer
+    if (mapped.length === 1 && mapped[0]?.name?.toLowerCase().endsWith(".pdf") && mapped[0].raw) {
+      setTimeout(() => setViewerFile(mapped[0]), 300);
     }
   }, [showToast]);
 

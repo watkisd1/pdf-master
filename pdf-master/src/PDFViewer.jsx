@@ -14,9 +14,11 @@ const S = {
     fontFamily: "'Inter', -apple-system, sans-serif",
   },
   topbar: {
-    display: "flex", alignItems: "center", gap: 12,
+    display: "flex", alignItems: "center", gap: 8,
     padding: "0 16px", height: 52, background: "#13151F",
     borderBottom: "1px solid #2A2F4A", flexShrink: 0,
+    overflowX: "auto", overflowY: "hidden",
+    scrollbarWidth: "thin",
   },
   btn: (active) => ({
     display: "inline-flex", alignItems: "center", gap: 5,
@@ -137,6 +139,11 @@ const ICO = {
   print:     ["M6 9V2h12v7","M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2","M6 14h12v8H6z"],
   highlight: "M9 11l3 3L22 4 M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
   note:      "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
+  underline: "M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3 M4 21h16",
+  strike:    ["M17.3 4.9c-2.3-.6-4.4-1-6.2-.9-2.7 0-5.3.7-5.3 3.6 0 1.5 1.1 2.5 2.3 3.2M21 12H3", "M11.6 19.1c2.3.6 4.4 1 6.2.9 2.7 0 5.3-.7 5.3-3.6 0-1.5-1.1-2.5-2.3-3.2"],
+  pen:       "M12 19l7-7 3 3-7 7-3-3z M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z M2 2l7.586 7.586 M11 11l-4 4",
+  eraser:    ["M20 20H7L3 16l10-10 7 7-2.5 2.5", "M6.0001 10.0001l4 4"],
+  save:      "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z M17 21v-8H7v8 M7 3v5h8",
   search:    "M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z",
   rotate:    "M1 4v6h6 M23 20v-6h-6 M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15",
   plus:      "M12 5v14 M5 12h14",
@@ -168,7 +175,7 @@ const ThumbCanvas = ({ pdfDoc, pageNum, active, onClick }) => {
 };
 
 // ── Page canvas ───────────────────────────────────────────────────────────────
-const PageCanvas = ({ pdfDoc, pageNum, scale }) => {
+const PageCanvas = ({ pdfDoc, pageNum, scale, children }) => {
   const ref = useRef();
   const [dims, setDims] = useState({ w: 600, h: 800 });
 
@@ -192,8 +199,9 @@ const PageCanvas = ({ pdfDoc, pageNum, scale }) => {
   }, [pdfDoc, pageNum, scale]);
 
   return (
-    <div style={{ ...S.pageWrap, width: dims.w, minHeight: dims.h }}>
+    <div style={{ ...S.pageWrap, width: dims.w, minHeight: dims.h, position: "relative" }}>
       <canvas ref={ref} style={{ display: "block" }} />
+      {children}
     </div>
   );
 };
@@ -213,6 +221,39 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [activeTab, setActiveTab]     = useState("thumbs");
+
+  // ── Annotation state ─────────────────────────────────────────────────────────
+  const [annotations, setAnnotations]     = useState([]);
+  const [annotColor, setAnnotColor]       = useState("#FFD700");
+  const [annotDrawing, setAnnotDrawing]   = useState(false);
+  const [annotStart, setAnnotStart]       = useState(null);
+  const [annotCurrent, setAnnotCurrent]   = useState(null);
+  const [pendingNote, setPendingNote]     = useState(null);
+  const [noteInputText, setNoteInputText] = useState("");
+  const [savingAnnots, setSavingAnnots]   = useState(false);
+  const [annotSaved, setAnnotSaved]       = useState(false);
+  const [symbolSize, setSymbolSize]       = useState(32); // size for check/cross/stamp
+  const annotCanvasRef = useRef();
+  const annotLastPos   = useRef(null);
+  const annotPathRef   = useRef([]);
+
+  // ── Watermark state ──────────────────────────────────────────────────────────
+  const [showWatermarkPanel, setShowWatermarkPanel] = useState(false);
+  const [wmText, setWmText]             = useState("CONFIDENTIAL");
+  const [wmOpacity, setWmOpacity]       = useState(0.2);
+  const [wmAngle, setWmAngle]           = useState(45);
+  const [wmSize, setWmSize]             = useState(48);
+  const [wmColor, setWmColor]           = useState("#CC0000");
+  const [wmRepeat, setWmRepeat]         = useState(true);
+  const [applyingWm, setApplyingWm]     = useState(false);
+
+  // ── Form filling state ───────────────────────────────────────────────────────
+  const [formFields, setFormFields]     = useState([]);   // fields detected on current page
+  const [formValues, setFormValues]     = useState({});   // { fieldName: value }
+  const [formMode, setFormMode]         = useState(false);
+  const [savingForm, setSavingForm]     = useState(false);
+  const [formSaved, setFormSaved]       = useState(false);
+  const pageCanvasRef = useRef();   // ref to the rendered page canvas for positioning
 
   // ── Signature state ──────────────────────────────────────────────────────────
   const [showSignPanel, setShowSignPanel] = useState(false);
@@ -247,6 +288,26 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
 
     const load = async () => {
       try {
+        // Guard — only attempt to load actual PDF files
+        const name = file?.name?.toLowerCase() || "";
+        const isPDF = name.endsWith(".pdf") ||
+          (file?.raw instanceof File && file.raw.type === "application/pdf");
+
+        if (!isPDF) {
+          const ext = name.split(".").pop()?.toUpperCase() || "this file";
+          let hint = "";
+          if (/\.(xlsx?|docx?|pptx?)$/i.test(name)) {
+            hint = "Go to the Convert section to turn it into a PDF first, then open it here.";
+          } else if (/\.(jpg|jpeg|png|webp|gif)$/i.test(name)) {
+            hint = "Go to Convert → Images to PDF to turn it into a viewable PDF.";
+          } else {
+            hint = "Only PDF files can be opened in the viewer.";
+          }
+          setError(`Cannot open ${ext} file in the PDF viewer.\n\n${hint}`);
+          setLoading(false);
+          return;
+        }
+
         let source;
         if (file.raw instanceof File) {
           const buffer = await file.raw.arrayBuffer();
@@ -321,7 +382,647 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
     setSearchResults(results);
   }, [pdfDoc, searchQuery, numPages]);
 
-  const downloadPDF = () => {
+  // ── Annotation canvas sync — resize overlay to match rendered page ────────────
+  useEffect(() => {
+    const canvas = annotCanvasRef.current;
+    if (!canvas || !pageWrapRef.current) return;
+    const pageDiv = pageWrapRef.current.querySelector("canvas");
+    if (!pageDiv) return;
+    canvas.width  = pageDiv.width;
+    canvas.height = pageDiv.height;
+    canvas.style.width  = pageDiv.style.width  || pageDiv.width  + "px";
+    canvas.style.height = pageDiv.style.height || pageDiv.height + "px";
+    redrawAnnotCanvas();
+  }, [currentPage, scale, pdfDoc]);
+
+  // ── Redraw all annotations for current page onto the overlay canvas ──────────
+  const redrawAnnotCanvas = () => {
+    const canvas = annotCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const pageAnnots = annotations.filter(a => a.page === currentPage);
+    pageAnnots.forEach(a => drawAnnot(ctx, a));
+  };
+
+  const drawAnnot = (ctx, a) => {
+    ctx.save();
+    if (a.type === "highlight") {
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = a.color;
+      ctx.fillRect(a.x, a.y, a.w, a.h);
+
+    } else if (a.type === "underline") {
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y + a.h);
+      ctx.lineTo(a.x + a.w, a.y + a.h);
+      ctx.stroke();
+
+    } else if (a.type === "strikethrough") {
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y + a.h / 2);
+      ctx.lineTo(a.x + a.w, a.y + a.h / 2);
+      ctx.stroke();
+
+    } else if (a.type === "freehand") {
+      if (!a.points || a.points.length < 2) return;
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(a.points[0].x, a.points[0].y);
+      a.points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.stroke();
+
+    } else if (a.type === "note") {
+      // Draggable sticky note — yellow card with shadow
+      const w = 130, h = 70, r = 6;
+      ctx.globalAlpha = 0.95;
+      // Shadow
+      ctx.shadowColor = "rgba(0,0,0,0.25)";
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetX = 2;
+      ctx.shadowOffsetY = 2;
+      // Note background
+      ctx.fillStyle = a.color || "#FFD700";
+      ctx.beginPath();
+      ctx.roundRect(a.x, a.y, w, h, r);
+      ctx.fill();
+      ctx.shadowBlur = 0; ctx.shadowOffsetX = 0; ctx.shadowOffsetY = 0;
+      // Header bar
+      ctx.fillStyle = "rgba(0,0,0,0.12)";
+      ctx.beginPath();
+      ctx.roundRect(a.x, a.y, w, 18, [r, r, 0, 0]);
+      ctx.fill();
+      // Icon
+      ctx.font = "12px sans-serif";
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillText("📝", a.x + 4, a.y + 14);
+      // Note text
+      ctx.fillStyle = "#333";
+      ctx.font = "11px sans-serif";
+      const words = (a.text || "Note").split(" ");
+      let line = ""; let ly = a.y + 32;
+      words.forEach(word => {
+        const test = line + word + " ";
+        if (ctx.measureText(test).width > w - 10 && line) {
+          ctx.fillText(line, a.x + 5, ly);
+          line = word + " "; ly += 14;
+        } else { line = test; }
+      });
+      if (line && ly < a.y + h - 4) ctx.fillText(line, a.x + 5, ly);
+
+    } else if (a.type === "check") {
+      // Green checkmark
+      const s = a.size || 32;
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color || "#22C55E";
+      ctx.lineWidth = s * 0.12;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      ctx.moveTo(a.x + s * 0.15, a.y + s * 0.5);
+      ctx.lineTo(a.x + s * 0.38, a.y + s * 0.75);
+      ctx.lineTo(a.x + s * 0.85, a.y + s * 0.2);
+      ctx.stroke();
+      // Circle background
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = a.color || "#22C55E";
+      ctx.beginPath();
+      ctx.arc(a.x + s / 2, a.y + s / 2, s / 2, 0, Math.PI * 2);
+      ctx.fill();
+
+    } else if (a.type === "cross") {
+      // Red X mark
+      const s = a.size || 32;
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = a.color || "#EF4444";
+      ctx.lineWidth = s * 0.12;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(a.x + s * 0.2, a.y + s * 0.2);
+      ctx.lineTo(a.x + s * 0.8, a.y + s * 0.8);
+      ctx.moveTo(a.x + s * 0.8, a.y + s * 0.2);
+      ctx.lineTo(a.x + s * 0.2, a.y + s * 0.8);
+      ctx.stroke();
+      // Circle background
+      ctx.globalAlpha = 0.12;
+      ctx.fillStyle = a.color || "#EF4444";
+      ctx.beginPath();
+      ctx.arc(a.x + s / 2, a.y + s / 2, s / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  };
+
+  // Redraw whenever annotations or page changes
+  useEffect(() => {
+    redrawAnnotCanvas();
+  }, [annotations, currentPage]);
+
+  // ── Get mouse/touch position relative to annotation canvas ──────────────────
+  const getAnnotPos = (e) => {
+    const canvas = annotCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width  / rect.width;
+    const sy = canvas.height / rect.height;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: (clientX - rect.left) * sx,
+      y: (clientY - rect.top)  * sy,
+    };
+  };
+
+  // ── Annotation canvas mouse handlers ────────────────────────────────────────
+  const onAnnotMouseDown = (e) => {
+    if (!["highlight","underline","strikethrough","freehand","note","eraser","check","cross"].includes(activeTool)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const pos = getAnnotPos(e);
+
+    if (activeTool === "note") {
+      setPendingNote(pos);
+      setNoteInputText("");
+      return;
+    }
+
+    if (activeTool === "check" || activeTool === "cross") {
+      // Place symbol immediately on click
+      const newAnnot = {
+        id: Date.now(), type: activeTool,
+        x: pos.x - symbolSize / 2,
+        y: pos.y - symbolSize / 2,
+        size: symbolSize,
+        color: activeTool === "check" ? "#22C55E" : "#EF4444",
+        page: currentPage,
+      };
+      setAnnotations(prev => [...prev, newAnnot]);
+      return;
+    }
+
+    if (activeTool === "eraser") {
+      // Erase any annotation the user clicks on
+      const canvas = annotCanvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const sx = canvas.width  / rect.width;
+      const sy = canvas.height / rect.height;
+      setAnnotations(prev => prev.filter(a => {
+        if (a.page !== currentPage) return true;
+        // Check if click is within annotation bounds
+        if (a.type === "freehand") {
+          return !a.points?.some(p =>
+            Math.hypot(p.x - pos.x, p.y - pos.y) < 20
+          );
+        }
+        if (a.type === "check" || a.type === "cross") {
+          const s = a.size || 32;
+          return !(pos.x >= a.x && pos.x <= a.x + s &&
+                   pos.y >= a.y && pos.y <= a.y + s);
+        }
+        if (a.type === "note") {
+          return !(pos.x >= a.x && pos.x <= a.x + 130 &&
+                   pos.y >= a.y && pos.y <= a.y + 70);
+        }
+        // Rect-based annotations
+        const margin = 10;
+        return !(pos.x >= a.x - margin && pos.x <= a.x + (a.w || 0) + margin &&
+                 pos.y >= a.y - margin && pos.y <= a.y + (a.h || 20) + margin);
+      }));
+      return;
+    }
+
+    if (activeTool === "freehand") {
+      setAnnotDrawing(true);
+      annotPathRef.current = [pos];
+      annotLastPos.current = pos;
+      return;
+    }
+
+    setAnnotDrawing(true);
+    setAnnotStart(pos);
+    setAnnotCurrent(pos);
+  };
+
+  const onAnnotMouseMove = (e) => {
+    if (!annotDrawing) return;
+    e.preventDefault();
+    const pos = getAnnotPos(e);
+
+    if (activeTool === "freehand") {
+      const ctx = annotCanvasRef.current?.getContext("2d");
+      if (ctx && annotLastPos.current) {
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = annotColor;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.beginPath();
+        ctx.moveTo(annotLastPos.current.x, annotLastPos.current.y);
+        ctx.lineTo(pos.x, pos.y);
+        ctx.stroke();
+      }
+      annotPathRef.current.push(pos);
+      annotLastPos.current = pos;
+      return;
+    }
+    if (annotStart) {
+      setAnnotCurrent(pos);
+      // Draw live preview
+      const canvas = annotCanvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      redrawAnnotCanvas();
+      const x = Math.min(annotStart.x, pos.x);
+      const y = Math.min(annotStart.y, pos.y);
+      const w = Math.abs(pos.x - annotStart.x);
+      const h = Math.abs(pos.y - annotStart.y) || 18;
+      drawAnnot(ctx, { type: activeTool, x, y, w, h, color: annotColor, page: currentPage });
+    }
+  };
+
+  const onAnnotMouseUp = (e) => {
+    if (!annotDrawing) return;
+    e.preventDefault();
+    const pos = getAnnotPos(e);
+
+    if (activeTool === "freehand") {
+      setAnnotDrawing(false);
+      if (annotPathRef.current.length > 1) {
+        const newAnnot = { id: Date.now(), type: "freehand", points: [...annotPathRef.current], color: annotColor, page: currentPage };
+        setAnnotations(prev => [...prev, newAnnot]);
+      }
+      annotPathRef.current = [];
+      return;
+    }
+    if (annotStart) {
+      const x = Math.min(annotStart.x, pos.x);
+      const y = Math.min(annotStart.y, pos.y);
+      const w = Math.abs(pos.x - annotStart.x) || 80;
+      const h = Math.abs(pos.y - annotStart.y) || 18;
+      if (w > 4) {
+        const newAnnot = { id: Date.now(), type: activeTool, x, y, w, h, color: annotColor, page: currentPage };
+        setAnnotations(prev => [...prev, newAnnot]);
+      }
+    }
+    setAnnotDrawing(false);
+    setAnnotStart(null);
+    setAnnotCurrent(null);
+  };
+
+  // ── Save all annotations permanently into the PDF ───────────────────────────
+  const saveAnnotations = async () => {
+    if (!file?.raw || annotations.length === 0) return;
+    setSavingAnnots(true);
+    setAnnotSaved(false);
+    try {
+      const { PDFDocument, rgb } = await import("pdf-lib");
+      const buffer  = await file.raw.arrayBuffer();
+      const pdfDoc  = await PDFDocument.load(buffer, { ignoreEncryption: true });
+
+      for (const annot of annotations) {
+        const pageIdx = Math.min(Math.max((annot.page || 1) - 1, 0), pdfDoc.getPageCount() - 1);
+        const page    = pdfDoc.getPage(pageIdx);
+        const { width: pageW, height: pageH } = page.getSize();
+
+        // Convert canvas coords → PDF coords
+        const canvas = annotCanvasRef.current;
+        const cw = canvas?.width  || 600;
+        const ch = canvas?.height || 800;
+        const sx = pageW / cw;
+        const sy = pageH / ch;
+
+        // Parse hex color to pdf-lib rgb
+        const hexToRgb = (hex) => {
+          const r = parseInt(hex.slice(1, 3), 16) / 255;
+          const g = parseInt(hex.slice(3, 5), 16) / 255;
+          const b = parseInt(hex.slice(5, 7), 16) / 255;
+          return rgb(r, g, b);
+        };
+        const color = hexToRgb(annot.color || "#FFD700");
+
+        if (annot.type === "highlight") {
+          const pdfX = annot.x * sx;
+          const pdfY = pageH - (annot.y + annot.h) * sy;
+          page.drawRectangle({ x: pdfX, y: pdfY, width: annot.w * sx, height: annot.h * sy, color, opacity: 0.35 });
+
+        } else if (annot.type === "underline") {
+          const pdfX  = annot.x * sx;
+          const pdfY  = pageH - (annot.y + annot.h) * sy;
+          page.drawLine({ start: { x: pdfX, y: pdfY }, end: { x: (annot.x + annot.w) * sx, y: pdfY }, thickness: 1.5, color, opacity: 0.9 });
+
+        } else if (annot.type === "strikethrough") {
+          const pdfX  = annot.x * sx;
+          const midY  = pageH - (annot.y + annot.h / 2) * sy;
+          page.drawLine({ start: { x: pdfX, y: midY }, end: { x: (annot.x + annot.w) * sx, y: midY }, thickness: 1.5, color, opacity: 0.9 });
+
+        } else if (annot.type === "freehand" && annot.points?.length > 1) {
+          for (let i = 0; i < annot.points.length - 1; i++) {
+            const p1 = annot.points[i];
+            const p2 = annot.points[i + 1];
+            page.drawLine({
+              start: { x: p1.x * sx, y: pageH - p1.y * sy },
+              end:   { x: p2.x * sx, y: pageH - p2.y * sy },
+              thickness: 1.5, color, opacity: 0.85,
+            });
+          }
+
+        } else if (annot.type === "check" || annot.type === "cross") {
+          const s   = (annot.size || 32) * sx;
+          const pdfX = annot.x * sx;
+          const pdfY = pageH - annot.y * sy - s;
+          const hexC = (annot.color || (annot.type === "check" ? "#22C55E" : "#EF4444")).replace("#","");
+          const cr   = parseInt(hexC.slice(0,2),16)/255;
+          const cg   = parseInt(hexC.slice(2,4),16)/255;
+          const cb   = parseInt(hexC.slice(4,6),16)/255;
+          const c    = rgb(cr, cg, cb);
+          if (annot.type === "check") {
+            page.drawLine({ start: { x: pdfX + s*0.15, y: pdfY + s*0.25 }, end: { x: pdfX + s*0.38, y: pdfY + s*0.0 }, thickness: s*0.1, color: c, opacity: 0.9 });
+            page.drawLine({ start: { x: pdfX + s*0.38, y: pdfY + s*0.0 }, end: { x: pdfX + s*0.85, y: pdfY + s*0.55 }, thickness: s*0.1, color: c, opacity: 0.9 });
+          } else {
+            page.drawLine({ start: { x: pdfX + s*0.2, y: pdfY + s*0.2 }, end: { x: pdfX + s*0.8, y: pdfY + s*0.8 }, thickness: s*0.1, color: c, opacity: 0.9 });
+            page.drawLine({ start: { x: pdfX + s*0.8, y: pdfY + s*0.2 }, end: { x: pdfX + s*0.2, y: pdfY + s*0.8 }, thickness: s*0.1, color: c, opacity: 0.9 });
+          }
+
+        } else if (annot.type === "note") {
+          const { StandardFonts } = await import("pdf-lib");
+          const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+          const pdfX = annot.x * sx;
+          const pdfY = pageH - annot.y * sy - 30;
+          // Yellow box
+          page.drawRectangle({ x: pdfX, y: pdfY, width: 120, height: 40, color: rgb(1, 0.95, 0.5), opacity: 0.85 });
+          // Note text
+          const noteWords = (annot.text || "Note").substring(0, 60);
+          page.drawText(noteWords, { x: pdfX + 4, y: pdfY + 14, font, size: 8, color: rgb(0.1, 0.1, 0.1) });
+        }
+      }
+
+      const annotatedBytes = await pdfDoc.save();
+      const fileName = file.name.replace(/\.pdf$/i, "") + "_annotated.pdf";
+      const blob     = new Blob([annotatedBytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Add to workspace and reload viewer
+      if (onAddFiles) onAddFiles([rawFile]);
+      const reloaded = await pdfjsLib.getDocument({ data: await rawFile.arrayBuffer() }).promise;
+      setPdfDoc(reloaded);
+      setNumPages(reloaded.numPages);
+      file.name = fileName;
+      file.raw  = rawFile;
+
+      setAnnotations([]);
+      setSavingAnnots(false);
+      setAnnotSaved(true);
+      setTimeout(() => setAnnotSaved(false), 5000);
+    } catch (err) {
+      console.error(err);
+      setSavingAnnots(false);
+      alert(`Failed to save annotations: ${err.message}`);
+    }
+  };
+
+  // ── Apply custom watermark to all pages ─────────────────────────────────────
+  const applyWatermark = async () => {
+    if (!file?.raw) return;
+    setApplyingWm(true);
+    try {
+      const { PDFDocument, rgb, degrees } = await import("pdf-lib");
+      const { StandardFonts }             = await import("pdf-lib");
+      const buffer  = await file.raw.arrayBuffer();
+      const pdfDoc  = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const font    = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+      // Parse hex color
+      const hex   = wmColor.replace("#", "");
+      const r     = parseInt(hex.slice(0,2),16)/255;
+      const g     = parseInt(hex.slice(2,4),16)/255;
+      const b     = parseInt(hex.slice(4,6),16)/255;
+      const color = rgb(r, g, b);
+
+      pdfDoc.getPages().forEach(page => {
+        const { width: pw, height: ph } = page.getSize();
+        const textW = font.widthOfTextAtSize(wmText, wmSize);
+
+        if (wmRepeat) {
+          // Tile watermark across the page
+          const spacingX = textW + 60;
+          const spacingY = wmSize + 60;
+          for (let x = -pw; x < pw * 2; x += spacingX) {
+            for (let y = -ph; y < ph * 2; y += spacingY) {
+              page.drawText(wmText, {
+                x, y, font, size: wmSize,
+                color, opacity: wmOpacity,
+                rotate: degrees(wmAngle),
+              });
+            }
+          }
+        } else {
+          // Single centered watermark
+          page.drawText(wmText, {
+            x: (pw - textW) / 2,
+            y: (ph - wmSize) / 2,
+            font, size: wmSize,
+            color, opacity: wmOpacity,
+            rotate: degrees(wmAngle),
+          });
+        }
+      });
+
+      const bytes    = await pdfDoc.save();
+      const fileName = file.name.replace(/\.pdf$/i,"") + "_watermarked.pdf";
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Reload viewer with watermarked PDF
+      if (onAddFiles) onAddFiles([rawFile]);
+      const reloaded = await pdfjsLib.getDocument({ data: await rawFile.arrayBuffer() }).promise;
+      setPdfDoc(reloaded);
+      setNumPages(reloaded.numPages);
+      file.name = fileName;
+      file.raw  = rawFile;
+
+      setApplyingWm(false);
+      setShowWatermarkPanel(false);
+    } catch (err) {
+      console.error(err);
+      setApplyingWm(false);
+      alert(`Watermark failed: ${err.message}`);
+    }
+  };
+
+  // ── Load form fields for the current page ───────────────────────────────────
+  const loadFormFields = async () => {
+    if (!pdfDoc || !formMode) return;
+    try {
+      const page        = await pdfDoc.getPage(currentPage);
+      const annotations = await page.getAnnotations();
+      const vp          = page.getViewport({ scale });
+
+      // PDF.js transform: PDF coords (bottom-left origin) → canvas coords (top-left origin)
+      // vp.transform is [sx, 0, 0, sy, tx, ty]
+      // For a standard upright page: sx=scale, sy=-scale, tx=0, ty=vp.height
+      const [sx, , , sy, tx, ty] = vp.transform;
+
+      const widgets = annotations.filter(a => a.subtype === "Widget");
+
+      const fields = widgets.map(a => {
+        // a.rect is in PDF user space [x1, y1, x2, y2]
+        const [px1, py1, px2, py2] = a.rect;
+
+        // Apply the viewport transform to each corner
+        const cx1 = px1 * sx + tx;
+        const cy1 = py1 * sy + ty;
+        const cx2 = px2 * sx + tx;
+        const cy2 = py2 * sy + ty;
+
+        // Canvas top-left is min of transformed coords
+        const left   = Math.min(cx1, cx2);
+        const top    = Math.min(cy1, cy2);
+        const width  = Math.abs(cx2 - cx1);
+        const height = Math.abs(cy2 - cy1);
+
+        return {
+          id:          a.id || a.fieldName,
+          fieldName:   a.fieldName || a.alternativeText || `field_${a.id}`,
+          fieldType:   a.fieldType,
+          fieldValue:  a.fieldValue != null ? String(a.fieldValue) : "",
+          buttonValue: a.buttonValue,
+          left, top, width, height,
+          readOnly:    !!(a.fieldFlags & 1),
+          multiLine:   !!(a.fieldFlags & (1 << 12)),
+          checkBox:    a.fieldType === "Btn" && !(a.fieldFlags & (1 << 15)),
+          radio:       a.fieldType === "Btn" &&  !!(a.fieldFlags & (1 << 15)),
+          options:     a.options || [],
+        };
+      });
+
+      console.log(`[Form] Page ${currentPage}: found ${widgets.length} widget(s)`, fields.map(f => `${f.fieldName} at (${Math.round(f.left)},${Math.round(f.top)}) ${Math.round(f.width)}×${Math.round(f.height)}`));
+
+      setFormFields(fields);
+
+      // Pre-populate with existing values from the PDF
+      const existing = {};
+      fields.forEach(f => {
+        if (formValues[f.fieldName] === undefined && f.fieldValue) {
+          existing[f.fieldName] = f.fieldValue;
+        }
+      });
+      if (Object.keys(existing).length > 0) {
+        setFormValues(prev => ({ ...existing, ...prev }));
+      }
+    } catch (err) {
+      console.warn("Could not load form fields:", err);
+      setFormFields([]);
+    }
+  };
+
+  // Reload fields when page changes or form mode toggles
+  useEffect(() => {
+    if (formMode) loadFormFields();
+    else setFormFields([]);
+  }, [currentPage, formMode, pdfDoc, scale]);
+
+  // ── Save filled form values into the PDF ────────────────────────────────────
+  const saveFormData = async () => {
+    if (!file?.raw) return;
+    setSavingForm(true);
+    setFormSaved(false);
+
+    // Collect values — inputs update formValues on blur, but also
+    // check the DOM directly for any field that's currently focused
+    const activeEl = document.activeElement;
+    const currentValues = { ...formValues };
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+      // Find which field this element belongs to by position match
+      formFields.forEach(field => {
+        const rect = activeEl.getBoundingClientRect();
+        if (Math.abs(rect.left - field.left) < 5) {
+          currentValues[field.fieldName] = activeEl.value;
+        }
+      });
+    }
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const buffer  = await file.raw.arrayBuffer();
+      const pdfDoc2 = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const form    = pdfDoc2.getForm();
+
+      // Try to fill each field by name
+      const fields2 = form.getFields();
+      fields2.forEach(field => {
+        const name  = field.getName();
+        const value = currentValues[name];
+        if (value === undefined || value === null) return;
+        try {
+          const type = field.constructor.name;
+          if (type === "PDFTextField") {
+            field.setText(String(value));
+          } else if (type === "PDFCheckBox") {
+            value === true || value === "true" || value === "Yes"
+              ? field.check()
+              : field.uncheck();
+          } else if (type === "PDFDropdown" || type === "PDFOptionList") {
+            if (value) field.select(String(value));
+          }
+        } catch (fieldErr) {
+          console.warn(`Could not fill field "${name}":`, fieldErr.message);
+        }
+      });
+
+      // Flatten the form so values are burned into the PDF visually
+      form.flatten();
+
+      const bytes    = await pdfDoc2.save();
+      const fileName = file.name.replace(/\.pdf$/i, "") + "_filled.pdf";
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Add to workspace and reload viewer
+      if (onAddFiles) onAddFiles([rawFile]);
+      const reloaded = await pdfjsLib.getDocument({ data: await rawFile.arrayBuffer() }).promise;
+      setPdfDoc(reloaded);
+      setNumPages(reloaded.numPages);
+      file.name = fileName;
+      file.raw  = rawFile;
+
+      setSavingForm(false);
+      setFormSaved(true);
+      setFormMode(false);
+      setTimeout(() => setFormSaved(false), 5000);
+    } catch (err) {
+      console.error(err);
+      setSavingForm(false);
+      alert(`Failed to save form: ${err.message}`);
+    }
+  };
     if (!file?.raw) return;
     const url = URL.createObjectURL(file.raw);
     const a = document.createElement("a");
@@ -445,27 +1146,44 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
   const onPreviewMouseDown = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!sigPreview || !pageWrapRef.current) return;
+    const rect = pageWrapRef.current.getBoundingClientRect();
     setSigDragging(true);
     setSigDragOffset({
-      x: e.clientX - sigPreview.x - (pageWrapRef.current?.getBoundingClientRect().left || 0),
-      y: e.clientY - sigPreview.y - (pageWrapRef.current?.getBoundingClientRect().top  || 0),
+      x: e.clientX - rect.left - sigPreview.x,
+      y: e.clientY - rect.top  - sigPreview.y,
     });
   };
 
-  const onPreviewMouseMove = (e) => {
-    if (!sigDragging || !sigPreview) return;
-    const rect = pageWrapRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const nx = e.clientX - rect.left - sigDragOffset.x;
-    const ny = e.clientY - rect.top  - sigDragOffset.y;
-    setSigPreview(prev => ({
-      ...prev,
-      x: Math.max(0, Math.min(nx, rect.width  - prev.w)),
-      y: Math.max(0, Math.min(ny, rect.height - prev.h)),
-    }));
-  };
+  // ── Attach drag handlers to window so drag never breaks on fast moves ────────
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!sigDragging || !sigPreview || !pageWrapRef.current) return;
+      const rect = pageWrapRef.current.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const nx = clientX - rect.left - sigDragOffset.x;
+      const ny = clientY - rect.top  - sigDragOffset.y;
+      setSigPreview(prev => ({
+        ...prev,
+        x: Math.max(0, Math.min(nx, rect.width  - prev.w)),
+        y: Math.max(0, Math.min(ny, rect.height - prev.h)),
+      }));
+    };
+    const onUp = () => setSigDragging(false);
 
-  const onPreviewMouseUp = () => setSigDragging(false);
+    window.addEventListener("mousemove",  onMove);
+    window.addEventListener("mouseup",    onUp);
+    window.addEventListener("touchmove",  onMove, { passive: false });
+    window.addEventListener("touchend",   onUp);
+
+    return () => {
+      window.removeEventListener("mousemove",  onMove);
+      window.removeEventListener("mouseup",    onUp);
+      window.removeEventListener("touchmove",  onMove);
+      window.removeEventListener("touchend",   onUp);
+    };
+  }, [sigDragging, sigPreview, sigDragOffset]);
 
   // ── Step 4: Convert preview screen position → PDF coordinate ────────────────
   // The page is rendered at `scale` so we divide by scale to get PDF points
@@ -575,73 +1293,227 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       `}</style>
 
       {/* Top bar */}
-      <div style={S.topbar}>
-        <button className="ihov" style={S.btn(false)} onClick={onClose}>
-          <Ic path={ICO.back} size={14} /> Back
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#E8E9F0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {file?.name || "document.pdf"}
-        </span>
-        {pdfDoc && <span style={S.chip}>{numPages} pages</span>}
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+      {/* ── Toolbar: two rows so nothing is hidden ── */}
+      <div style={{ background: "#13151F", borderBottom: "1px solid #2A2F4A", flexShrink: 0 }}>
 
-        {/* Zoom */}
-        <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.max(0.4, +(s - 0.15).toFixed(2)))} title="Zoom out (-)">
-          <Ic path={ICO.zoomOut} size={14} />
-        </button>
-        <span style={{ fontSize: 12, color: "#E8E9F0", fontWeight: 600, minWidth: 42, textAlign: "center" }}>{zoomPct}%</span>
-        <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.min(3, +(s + 0.15).toFixed(2)))} title="Zoom in (+)">
-          <Ic path={ICO.zoomIn} size={14} />
-        </button>
-        <button className="ihov" style={{ ...S.iconBtn, width: "auto", padding: "0 10px", fontSize: 11 }} onClick={() => setScale(1.4)}>
-          Fit
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+        {/* Row 1 — navigation, zoom, page, view, download, print */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 16px", height: 44, borderBottom: "1px solid #1E2235" }}>
+          <button className="ihov" style={S.btn(false)} onClick={onClose}>
+            <Ic path={ICO.back} size={14} /> Back
+          </button>
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#E8E9F0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>
+            {file?.name || "document.pdf"}
+          </span>
+          {pdfDoc && <span style={S.chip}>{numPages} pp</span>}
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
 
-        {/* Page nav */}
-        <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}>
-          <Ic path={ICO.prev} size={14} />
-        </button>
-        <span style={{ fontSize: 12, color: "#E8E9F0", fontWeight: 500, minWidth: 60, textAlign: "center" }}>
-          {loading ? "—" : `${currentPage} / ${numPages}`}
-        </span>
-        <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages}>
-          <Ic path={ICO.next} size={14} />
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+          {/* Zoom */}
+          <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.max(0.4, +(s - 0.15).toFixed(2)))} title="Zoom out (-)">
+            <Ic path={ICO.zoomOut} size={14} />
+          </button>
+          <span style={{ fontSize: 11, color: "#E8E9F0", fontWeight: 600, minWidth: 36, textAlign: "center" }}>{zoomPct}%</span>
+          <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.min(3, +(s + 0.15).toFixed(2)))} title="Zoom in (+)">
+            <Ic path={ICO.zoomIn} size={14} />
+          </button>
+          <button className="ihov" style={{ ...S.iconBtn, width: "auto", padding: "0 8px", fontSize: 11 }} onClick={() => setScale(1.4)}>Fit</button>
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
 
-        {/* View mode */}
-        <button style={S.btn(viewMode === "single")}     onClick={() => setViewMode("single")}>Single</button>
-        <button style={S.btn(viewMode === "continuous")} onClick={() => setViewMode("continuous")}>Scroll</button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+          {/* Page nav */}
+          <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}>
+            <Ic path={ICO.prev} size={14} />
+          </button>
+          <span style={{ fontSize: 11, color: "#E8E9F0", fontWeight: 500, minWidth: 52, textAlign: "center" }}>
+            {loading ? "—" : `${currentPage} / ${numPages}`}
+          </span>
+          <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages}>
+            <Ic path={ICO.next} size={14} />
+          </button>
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
 
-        {/* Tools */}
-        <button style={S.btn(activeTool === "highlight")} onClick={() => setActiveTool(t => t === "highlight" ? "none" : "highlight")}>
-          <Ic path={ICO.highlight} size={13} /> Highlight
-        </button>
-        <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }}>
-          <Ic path={ICO.note} size={13} /> Note
-        </button>
-        <button style={{ ...S.btn(showSignPanel), background: showSignPanel ? "#2ECC71" : S.btn(false).background }} onClick={() => setShowSignPanel(v => !v)}>
-          ✍ Sign
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+          {/* View mode */}
+          <button style={S.btn(viewMode === "single")}     onClick={() => setViewMode("single")}>Single</button>
+          <button style={S.btn(viewMode === "continuous")} onClick={() => setViewMode("continuous")}>Scroll</button>
+          <div style={{ flex: 1 }} />
 
-        <button className="ihov" style={S.iconBtn} onClick={downloadPDF} title="Download">
-          <Ic path={ICO.download} size={14} />
-        </button>
-        <button className="ihov" style={S.iconBtn} onClick={printPDF} title="Print">
-          <Ic path={ICO.print} size={14} />
-        </button>
+          {/* Print & Download — always visible, right side */}
+          <button
+            className="ihov"
+            style={{ ...S.btn(false), background: "#2563EB", color: "#fff", gap: 5, border: "none" }}
+            onClick={printPDF}
+            title="Print this PDF"
+          >
+            <Ic path={ICO.print} size={13} /> Print
+          </button>
+          <button className="ihov" style={S.iconBtn} onClick={downloadPDF} title="Download PDF">
+            <Ic path={ICO.download} size={14} />
+          </button>
+        </div>
+
+        {/* Row 2 — annotation & editing tools */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 16px", height: 40, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "thin" }}>
+
+          {/* Annotation tools */}
+          <button style={S.btn(activeTool === "highlight")} onClick={() => setActiveTool(t => t === "highlight" ? "none" : "highlight")} title="Highlight">
+            🟡 Highlight
+          </button>
+          <button style={S.btn(activeTool === "underline")} onClick={() => setActiveTool(t => t === "underline" ? "none" : "underline")} title="Underline">
+            <Ic path={ICO.underline} size={13} /> Underline
+          </button>
+          <button style={S.btn(activeTool === "strikethrough")} onClick={() => setActiveTool(t => t === "strikethrough" ? "none" : "strikethrough")} title="Strikethrough">
+            <Ic path={ICO.strike} size={13} /> Strike
+          </button>
+          <button style={S.btn(activeTool === "freehand")} onClick={() => setActiveTool(t => t === "freehand" ? "none" : "freehand")} title="Draw freehand">
+            <Ic path={ICO.pen} size={13} /> Draw
+          </button>
+          <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }} title="Sticky note">
+            <Ic path={ICO.note} size={13} /> Note
+          </button>
+          <button style={{ ...S.btn(activeTool === "check"), color: activeTool === "check" ? "#fff" : "#22C55E", background: activeTool === "check" ? "#22C55E" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "check" ? "none" : "check")} title="Check mark">
+            ✓ Check
+          </button>
+          <button style={{ ...S.btn(activeTool === "cross"), color: activeTool === "cross" ? "#fff" : "#EF4444", background: activeTool === "cross" ? "#EF4444" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "cross" ? "none" : "cross")} title="X mark">
+            ✕ Cross
+          </button>
+          <button style={{ ...S.btn(activeTool === "eraser"), color: activeTool === "eraser" ? "#fff" : "#FB923C", background: activeTool === "eraser" ? "#FB923C" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "eraser" ? "none" : "eraser")} title="Eraser">
+            <Ic path={ICO.eraser} size={13} /> Erase
+          </button>
+
+          {/* Symbol size slider */}
+          {["check","cross"].includes(activeTool) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 5, borderLeft: "1px solid #2A2F4A", paddingLeft: 8 }}>
+              <span style={{ fontSize: 10, color: "#7B8099", whiteSpace: "nowrap" }}>Size {symbolSize}</span>
+              <input type="range" min={16} max={64} value={symbolSize} onChange={e => setSymbolSize(parseInt(e.target.value))} style={{ width: 60 }} />
+            </div>
+          )}
+
+          {/* Color picker */}
+          {["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && (
+            <div style={{ display: "flex", gap: 5, alignItems: "center", borderLeft: "1px solid #2A2F4A", paddingLeft: 8 }}>
+              {["#FFD700","#FF6B6B","#4ECDC4","#A78BFA","#34D399","#FB923C"].map(c => (
+                <div key={c} onClick={() => setAnnotColor(c)} style={{ width: 16, height: 16, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${annotColor === c ? "#fff" : "transparent"}`, flexShrink: 0 }} />
+              ))}
+            </div>
+          )}
+
+          {/* Save / Clear annotations */}
+          {annotations.filter(a => a.page === currentPage).length > 0 && (
+            <>
+              <div style={{ width: 1, height: 18, background: "#2A2F4A", flexShrink: 0 }} />
+              <button style={{ ...S.btn(false), background: "#E84D4D", color: "#fff", border: "none", whiteSpace: "nowrap" }} onClick={saveAnnotations} disabled={savingAnnots}>
+                <Ic path={ICO.save} size={13} /> {savingAnnots ? "Saving…" : `Save ${annotations.filter(a => a.page === currentPage).length} annots`}
+              </button>
+              <button style={{ ...S.btn(false), fontSize: 11, whiteSpace: "nowrap" }} onClick={() => setAnnotations([])}>✕ Clear</button>
+            </>
+          )}
+
+          <div style={{ width: 1, height: 18, background: "#2A2F4A", flexShrink: 0 }} />
+
+          {/* Watermark */}
+          <button style={{ ...S.btn(showWatermarkPanel), background: showWatermarkPanel ? "#7C3AED" : S.btn(false).background, color: showWatermarkPanel ? "#fff" : "#A78BFA", whiteSpace: "nowrap" }} onClick={() => setShowWatermarkPanel(v => !v)}>
+            🔏 Watermark
+          </button>
+
+          {/* Sign */}
+          <button style={{ ...S.btn(showSignPanel), background: showSignPanel ? "#2ECC71" : S.btn(false).background, whiteSpace: "nowrap" }} onClick={() => setShowSignPanel(v => !v)}>
+            ✍ Sign
+          </button>
+
+          {/* Fill Form */}
+          <button
+            style={{ ...S.btn(formMode), background: formMode ? "#60A5FA" : S.btn(false).background, color: formMode ? "#0D0E14" : "#60A5FA", whiteSpace: "nowrap" }}
+            onClick={() => setFormMode(v => !v)}
+          >
+            📝 Fill Form
+          </button>
+
+          {/* Save form values */}
+          {formMode && Object.values(formValues).some(v => v && v !== "") && (
+            <button onClick={saveFormData} disabled={savingForm} style={{ ...S.btn(false), background: "#22C55E", color: "#0D0E14", border: "none", whiteSpace: "nowrap" }}>
+              {savingForm ? "Saving…" : "💾 Save Form"}
+            </button>
+          )}
+        </div>
       </div>
 
       <div style={S.body}>
 
         {/* ── Sign success banner ── */}
         {signSuccess && (
+
+        {/* ── Form fill mode banner ── */}
+        {formMode && (
+          <div style={{ position: "absolute", top: 84, left: 0, right: 0, zIndex: 150, background: "rgba(96,165,250,0.95)", padding: "8px 20px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+            <span style={{ fontSize: 16 }}>📝</span>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#0D0E14", flex: 1 }}>
+              Form fill mode — click any blue field on the page and type. Use Tab to move between fields.
+              {formFields.length > 0 && <span style={{ fontWeight: 400, marginLeft: 8 }}>{formFields.length} field(s) on this page.</span>}
+            </div>
+            {Object.values(formValues).some(v => v && v !== "") && (
+              <button onClick={saveFormData} disabled={savingForm} style={{ background: "#22C55E", color: "#0D0E14", border: "none", borderRadius: 7, padding: "5px 14px", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 }}>
+                {savingForm ? "Saving…" : "💾 Save & Download"}
+              </button>
+            )}
+            <button onClick={() => setFormMode(false)} style={{ background: "rgba(0,0,0,0.15)", border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 12, color: "#0D0E14", fontFamily: "inherit", flexShrink: 0 }}>
+              Done
+            </button>
+          </div>
+        )}
+
+        {/* ── Watermark panel ── */}
+        {showWatermarkPanel && (
+          <div style={{ position: "absolute", top: 84, left: 0, right: 0, zIndex: 200, background: "#13151F", borderBottom: "2px solid #7C3AED", padding: "16px 20px", display: "flex", gap: 20, alignItems: "flex-end", boxShadow: "0 4px 20px rgba(0,0,0,0.5)", flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#A78BFA", letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 10 }}>🔏 Custom Watermark — applied to all pages</div>
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Text</label>
+                  <input value={wmText} onChange={e => setWmText(e.target.value)} style={{ background: "#22263A", border: "1px solid #2A2F4A", borderRadius: 7, padding: "6px 10px", color: "#E8E9F0", fontSize: 13, outline: "none", fontFamily: "inherit", width: 160 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Opacity {Math.round(wmOpacity * 100)}%</label>
+                  <input type="range" min={5} max={80} value={Math.round(wmOpacity * 100)} onChange={e => setWmOpacity(parseInt(e.target.value) / 100)} style={{ width: 90 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Angle {wmAngle}°</label>
+                  <input type="range" min={-90} max={90} value={wmAngle} onChange={e => setWmAngle(parseInt(e.target.value))} style={{ width: 90 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Size {wmSize}pt</label>
+                  <input type="range" min={12} max={120} value={wmSize} onChange={e => setWmSize(parseInt(e.target.value))} style={{ width: 90 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Color</label>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    {["#CC0000","#0044CC","#006600","#7C3AED","#111111","#888888"].map(c => (
+                      <div key={c} onClick={() => setWmColor(c)} style={{ width: 20, height: 20, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${wmColor === c ? "#fff" : "transparent"}` }} />
+                    ))}
+                    <input type="color" value={wmColor} onChange={e => setWmColor(e.target.value)} style={{ width: 20, height: 20, border: "none", background: "none", cursor: "pointer", padding: 0 }} title="Custom color" />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 10, color: "#7B8099", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: ".4px" }}>Pattern</label>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {[["Repeat", true],["Single", false]].map(([lbl, val]) => (
+                      <button key={lbl} onClick={() => setWmRepeat(val)} style={{ background: wmRepeat === val ? "#7C3AED" : "#22263A", color: wmRepeat === val ? "#fff" : "#7B8099", border: `1px solid ${wmRepeat === val ? "#7C3AED" : "#2A2F4A"}`, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}>{lbl}</button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={applyWatermark} disabled={!wmText.trim() || applyingWm} style={{ background: wmText.trim() && !applyingWm ? "#7C3AED" : "#22263A", color: wmText.trim() && !applyingWm ? "#fff" : "#4A5070", border: "none", borderRadius: 8, padding: "8px 16px", cursor: wmText.trim() && !applyingWm ? "pointer" : "not-allowed", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>
+                    {applyingWm ? "Applying…" : "Apply Watermark"}
+                  </button>
+                  <button onClick={() => setShowWatermarkPanel(false)} style={{ background: "transparent", border: "1px solid #2A2F4A", borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontSize: 12, color: "#7B8099", fontFamily: "inherit" }}>Cancel</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Sign success banner ── */}
+        {signSuccess && (
           <div style={{
-            position: "absolute", top: 52, left: 0, right: 0, zIndex: 300,
+            position: "absolute", top: 84, left: 0, right: 0, zIndex: 300,
             background: "rgba(46,204,113,0.95)", padding: "12px 20px",
             display: "flex", alignItems: "center", gap: 12,
             boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
@@ -660,7 +1532,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         )}
         {showSignPanel && (
           <div style={{
-            position: "absolute", top: 52, left: 0, right: 0, zIndex: 200,
+            position: "absolute", top: 84, left: 0, right: 0, zIndex: 200,
             background: "#13151F", borderBottom: "2px solid #2ECC71",
             padding: "16px 20px", display: "flex", gap: 24, alignItems: "flex-start",
             boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
@@ -840,9 +1712,6 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         <div
           style={{ ...S.mainArea, cursor: placingMode ? "crosshair" : "default" }}
           ref={mainRef}
-          onMouseMove={onPreviewMouseMove}
-          onMouseUp={onPreviewMouseUp}
-          onMouseLeave={onPreviewMouseUp}
         >
           {/* Placing mode instruction banner */}
           {placingMode && (
@@ -870,8 +1739,16 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
           )}
           {error && (
             <div style={S.errorBox}>
-              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Failed to load PDF</div>
-              <div style={{ fontSize: 12, opacity: .8 }}>{error}</div>
+              <div style={{ fontSize: 22, marginBottom: 10 }}>⚠️</div>
+              <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
+                {error.includes("Cannot open") ? "Wrong file type" : "Failed to load PDF"}
+              </div>
+              {error.split("\n").filter(Boolean).map((line, i) => (
+                <div key={i} style={{ fontSize: 12, opacity: i === 0 ? 1 : 0.75, marginBottom: 4, lineHeight: 1.5 }}>{line}</div>
+              ))}
+              <button onClick={onClose} style={{ marginTop: 16, background: "#E84D4D", color: "#fff", border: "none", borderRadius: 8, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit" }}>
+                ← Go back
+              </button>
             </div>
           )}
 
@@ -881,12 +1758,207 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
               style={{ position: "relative", display: "inline-block" }}
               onClick={handlePageClick}
             >
-              <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale} />
+              <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale}>
+
+                {/* ── Form field overlays — inside PageCanvas so coords align ── */}
+                {formMode && formFields.map((field) => {
+                  const val = formValues[field.fieldName] ?? field.fieldValue ?? "";
+                  const commonStyle = {
+                    position: "absolute",
+                    left:   field.left,
+                    top:    field.top,
+                    width:  Math.max(field.width, 20),
+                    height: Math.max(field.height, 16),
+                    boxSizing: "border-box",
+                    zIndex: 20,
+                  };
+
+                  if (field.checkBox) {
+                    return (
+                      <div
+                        key={field.fieldName}
+                        style={{ ...commonStyle, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                        onClick={() => setFormValues(prev => ({ ...prev, [field.fieldName]: !(prev[field.fieldName]) }))}
+                      >
+                        <div style={{ width: Math.min(field.width, field.height) - 4, height: Math.min(field.width, field.height) - 4, border: "2.5px solid #2563EB", borderRadius: 3, background: val ? "#2563EB" : "rgba(255,255,255,0.95)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {(val === true || val === "true" || val === "Yes") && <span style={{ color: "#fff", fontSize: 11, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (field.options && field.options.length > 0) {
+                    return (
+                      <select
+                        key={field.fieldName}
+                        value={val}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setFormValues(prev => ({ ...prev, [field.fieldName]: v }));
+                        }}
+                        style={{ ...commonStyle, background: "rgba(255,255,248,0.97)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.55, 9), 14), padding: "0 2px", outline: "none", fontFamily: "inherit", cursor: "pointer" }}
+                      >
+                        <option value="">Select…</option>
+                        {field.options.map((opt, j) => (
+                          <option key={j} value={opt.exportValue || opt.displayValue}>{opt.displayValue || opt.exportValue}</option>
+                        ))}
+                      </select>
+                    );
+                  }
+
+                  // Text field — use defaultValue + onBlur to avoid focus loss on each keystroke
+                  return field.multiLine ? (
+                    <textarea
+                      key={field.fieldName}
+                      defaultValue={val}
+                      onBlur={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
+                      onChange={e => {
+                        // Update ref value immediately for save without losing focus
+                        e.target._latestValue = e.target.value;
+                      }}
+                      onFocus={e => { e.target._latestValue = e.target.value; }}
+                      placeholder=""
+                      style={{ ...commonStyle, background: "rgba(255,255,248,0.92)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.45, 9), 14), padding: "2px 3px", outline: "none", resize: "none", fontFamily: "inherit", lineHeight: 1.3 }}
+                    />
+                  ) : (
+                    <input
+                      key={field.fieldName}
+                      type="text"
+                      defaultValue={val}
+                      onBlur={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
+                      placeholder=""
+                      style={{ ...commonStyle, background: "rgba(255,255,248,0.92)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.55, 9), 14), padding: "0 3px", outline: "none", fontFamily: "inherit" }}
+                    />
+                  );
+                })}
+
+                {/* No fields message */}
+                {formMode && formFields.length === 0 && !loading && (
+                  <div style={{ position: "absolute", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 300, background: "rgba(37,99,235,0.93)", padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", pointerEvents: "none" }}>
+                    No fillable form fields found on this page
+                  </div>
+                )}
+
+              </PageCanvas>
+
+              {/* ── Form saved banner ── */}
+              {formSaved && (
+                <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 300, background: "rgba(34,197,94,0.95)", padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, color: "#0D0E14", boxShadow: "0 4px 16px rgba(0,0,0,0.3)", whiteSpace: "nowrap" }}>
+                  ✓ Form saved and downloaded!
+                </div>
+              )}
+
+              {/* ── Annotation overlay canvas ── */}
+              {["highlight","underline","strikethrough","freehand","note","eraser","check","cross"].includes(activeTool) && (
+                <canvas
+                  ref={annotCanvasRef}
+                  onMouseDown={onAnnotMouseDown}
+                  onMouseMove={onAnnotMouseMove}
+                  onMouseUp={onAnnotMouseUp}
+                  onMouseLeave={onAnnotMouseUp}
+                  onTouchStart={onAnnotMouseDown}
+                  onTouchMove={onAnnotMouseMove}
+                  onTouchEnd={onAnnotMouseUp}
+                  style={{
+                    position: "absolute", inset: 0,
+                    cursor: activeTool === "freehand"  ? "crosshair"
+                          : activeTool === "note"      ? "cell"
+                          : activeTool === "eraser"    ? "cell"
+                          : activeTool === "check"     ? "crosshair"
+                          : activeTool === "cross"     ? "crosshair"
+                          : "text",
+                    zIndex: 10, touchAction: "none",
+                  }}
+                />
+              )}
+
+              {/* ── Read-only annotation overlay when no tool selected ── */}
+              {!["highlight","underline","strikethrough","freehand","note","eraser","check","cross"].includes(activeTool) && annotations.some(a => a.page === currentPage) && (
+                <canvas
+                  ref={annotCanvasRef}
+                  style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 10 }}
+                />
+              )}
+
+              {/* ── Sticky note input popup ── */}
+              {pendingNote && (
+                <div
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    position: "absolute",
+                    left: Math.min(pendingNote.x, (annotCanvasRef.current?.width || 600) - 220),
+                    top:  pendingNote.y,
+                    zIndex: 200,
+                    background: "#FFF9C4",
+                    border: "2px solid #FFD700",
+                    borderRadius: 10,
+                    padding: 12,
+                    boxShadow: "0 6px 24px rgba(0,0,0,0.35)",
+                    width: 220,
+                  }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>
+                    📝 Add sticky note
+                  </div>
+                  <textarea
+                    autoFocus
+                    value={noteInputText}
+                    onChange={e => setNoteInputText(e.target.value)}
+                    rows={3}
+                    placeholder="Type your note…"
+                    style={{ width: "100%", border: "1px solid #FFD700", borderRadius: 6, padding: "6px 8px", fontSize: 12, fontFamily: "inherit", resize: "none", outline: "none", background: "#FFFDE7", boxSizing: "border-box" }}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && e.ctrlKey) {
+                        if (noteInputText.trim()) {
+                          setAnnotations(prev => [...prev, { id: Date.now(), type: "note", x: pendingNote.x, y: pendingNote.y, color: annotColor, text: noteInputText.trim(), page: currentPage }]);
+                        }
+                        setPendingNote(null);
+                        setNoteInputText("");
+                      }
+                      if (e.key === "Escape") { setPendingNote(null); setNoteInputText(""); }
+                    }}
+                  />
+                  <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                    <button
+                      onClick={() => {
+                        if (noteInputText.trim()) {
+                          setAnnotations(prev => [...prev, { id: Date.now(), type: "note", x: pendingNote.x, y: pendingNote.y, color: annotColor, text: noteInputText.trim(), page: currentPage }]);
+                        }
+                        setPendingNote(null);
+                        setNoteInputText("");
+                      }}
+                      style={{ flex: 1, background: "#FFD700", border: "none", borderRadius: 6, padding: "5px 0", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>
+                      Add note
+                    </button>
+                    <button onClick={() => { setPendingNote(null); setNoteInputText(""); }} style={{ background: "transparent", border: "1px solid #ccc", borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 12, fontFamily: "inherit" }}>
+                      Cancel
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 10, color: "#999", marginTop: 6 }}>Ctrl+Enter to save · Esc to cancel</div>
+                </div>
+              )}
+
+              {/* ── Annotation saved success banner ── */}
+              {annotSaved && (
+                <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 300, background: "rgba(46,204,113,0.95)", padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, color: "#0D0E14", boxShadow: "0 4px 16px rgba(0,0,0,0.3)", whiteSpace: "nowrap" }}>
+                  ✓ Annotations saved into PDF!
+                </div>
+              )}
 
               {/* Draggable signature preview */}
               {sigPreview && sigImageUrl && (
                 <div
                   onMouseDown={onPreviewMouseDown}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (!sigPreview || !pageWrapRef.current) return;
+                    const rect = pageWrapRef.current.getBoundingClientRect();
+                    setSigDragging(true);
+                    setSigDragOffset({
+                      x: e.touches[0].clientX - rect.left - sigPreview.x,
+                      y: e.touches[0].clientY - rect.top  - sigPreview.y,
+                    });
+                  }}
                   style={{
                     position: "absolute",
                     left: sigPreview.x,
@@ -896,23 +1968,47 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
                     cursor: sigDragging ? "grabbing" : "grab",
                     border: "2px dashed #2ECC71",
                     borderRadius: 6,
-                    background: "rgba(255,255,255,0.85)",
-                    boxShadow: "0 4px 20px rgba(46,204,113,0.4)",
+                    background: "rgba(255,255,255,0.92)",
+                    boxShadow: sigDragging
+                      ? "0 8px 32px rgba(46,204,113,0.6)"
+                      : "0 4px 20px rgba(46,204,113,0.35)",
                     display: "flex",
                     flexDirection: "column",
                     userSelect: "none",
                     zIndex: 100,
                     overflow: "hidden",
+                    transition: sigDragging ? "none" : "box-shadow 0.15s",
                   }}
                 >
                   {/* Drag handle bar */}
-                  <div style={{ background: "#2ECC71", padding: "3px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#0D0E14" }}>⠿ Drag to reposition</span>
+                  <div style={{
+                    background: sigDragging ? "#27AE60" : "#2ECC71",
+                    padding: "4px 8px",
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    flexShrink: 0, cursor: sigDragging ? "grabbing" : "grab",
+                    transition: "background 0.1s",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      {/* Grip dots */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                        {[...Array(6)].map((_, i) => (
+                          <div key={i} style={{ width: 3, height: 3, background: "rgba(0,0,0,0.35)", borderRadius: "50%" }} />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#0D0E14", letterSpacing: ".3px" }}>
+                        {sigDragging ? "Dragging…" : "Drag to move"}
+                      </span>
+                    </div>
                     <button
                       onMouseDown={e => e.stopPropagation()}
-                      onClick={e => { e.stopPropagation(); setSigPreview(null); setSigImageUrl(null); setShowSignPanel(true); }}
-                      style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, color: "#0D0E14", fontWeight: 700, lineHeight: 1, padding: 0 }}
-                    >✕</button>
+                      onClick={e => {
+                        e.stopPropagation();
+                        setSigPreview(null);
+                        setSigImageUrl(null);
+                        setShowSignPanel(true);
+                      }}
+                      style={{ background: "rgba(0,0,0,0.15)", border: "none", borderRadius: 4, cursor: "pointer", fontSize: 11, color: "#0D0E14", fontWeight: 700, lineHeight: 1, padding: "2px 6px", fontFamily: "inherit" }}
+                    >✕ Cancel</button>
                   </div>
 
                   {/* Signature image preview */}
@@ -993,6 +2089,32 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
                   <span style={{ color: "#E8E9F0", fontWeight: 500, maxWidth: 110, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v}</span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {annotations.length > 0 && (
+            <div style={S.rightSec}>
+              <div style={S.rightTitle}>Annotations</div>
+              <div style={{ fontSize: 11, color: "#7B8099", marginBottom: 8 }}>
+                {annotations.length} total · {annotations.filter(a => a.page === currentPage).length} on this page
+              </div>
+              {["highlight","underline","strikethrough","freehand","note"].map(type => {
+                const count = annotations.filter(a => a.type === type).length;
+                if (!count) return null;
+                const labels = { highlight: "🟡 Highlights", underline: "Underlines", strikethrough: "Strikethroughs", freehand: "✏ Drawings", note: "📝 Notes" };
+                return (
+                  <div key={type} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 0", borderBottom: "1px solid #2A2F4A" }}>
+                    <span style={{ color: "#7B8099" }}>{labels[type]}</span>
+                    <span style={{ color: "#E8E9F0", fontWeight: 600 }}>{count}</span>
+                  </div>
+                );
+              })}
+              <button onClick={saveAnnotations} disabled={savingAnnots} style={{ ...S.btn(true), marginTop: 10, width: "100%", justifyContent: "center", background: "#E84D4D", color: "#fff", border: "none" }}>
+                <Ic path={ICO.save} size={13} color="#fff" /> {savingAnnots ? "Saving…" : "Save to PDF"}
+              </button>
+              <button onClick={() => setAnnotations([])} style={{ ...S.btn(false), marginTop: 6, width: "100%", justifyContent: "center", fontSize: 11 }}>
+                ✕ Clear all
+              </button>
             </div>
           )}
 

@@ -216,14 +216,18 @@ const DropZone = ({ onFiles, accept = ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jp
   const [drag, setDrag] = useState(false);
   const inputRef = useRef();
   const handleDrop = useCallback(e => {
-    e.preventDefault(); setDrag(false);
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length) onFiles(files);
+    e.preventDefault();
+    e.stopPropagation();
+    setDrag(false);
+    const dropped = Array.from(e.dataTransfer.files);
+    if (dropped.length) onFiles(dropped);
   }, [onFiles]);
   return (
     <div
-      onDragOver={e => { e.preventDefault(); setDrag(true); }}
-      onDragLeave={() => setDrag(false)}
+      data-dropzone="true"
+      onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDrag(true); }}
+      onDragEnter={e => { e.preventDefault(); e.stopPropagation(); setDrag(true); }}
+      onDragLeave={e => { e.stopPropagation(); setDrag(false); }}
       onDrop={handleDrop}
       onClick={() => inputRef.current?.click()}
       style={{
@@ -783,7 +787,7 @@ const CreateSection = ({ onToast, onAddFiles, onView }) => {
 };
 
 // ─── Section: Merge & Split ───────────────────────────────────────────────────
-const MergeSection = ({ files, onToast }) => {
+const MergeSection = ({ files, onToast, onAddFiles }) => {
   const [tab, setTab] = useState("merge");
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [outputName, setOutputName] = useState("merged_document");
@@ -792,22 +796,148 @@ const MergeSection = ({ files, onToast }) => {
   const [splitRange, setSplitRange] = useState("");
   const [splitEvery, setSplitEvery] = useState(1);
   const [reorderFiles, setReorderFiles] = useState([...files]);
+  const [merging, setMerging] = useState(false);
+  const [splitting, setSplitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  // Keep reorderFiles in sync when files prop changes
+  useEffect(() => { setReorderFiles([...files]); }, [files]);
 
   const toggleSelect = (f) => setSelectedFiles(s => s.includes(f) ? s.filter(x => x !== f) : [...s, f]);
+  const moveUp   = (i) => { if (i === 0) return; const a = [...reorderFiles]; [a[i-1],a[i]]=[a[i],a[i-1]]; setReorderFiles(a); };
+  const moveDown = (i) => { if (i >= reorderFiles.length-1) return; const a = [...reorderFiles]; [a[i],a[i+1]]=[a[i+1],a[i]]; setReorderFiles(a); };
 
-  const handleMerge = () => {
+  // ── Parse a page range string like "1-3, 5, 7-10" into an array of 0-based indices
+  const parsePageRange = (rangeStr, totalPages) => {
+    const indices = new Set();
+    const parts = rangeStr.split(",").map(s => s.trim()).filter(Boolean);
+    for (const part of parts) {
+      if (part.includes("-")) {
+        const [start, end] = part.split("-").map(Number);
+        for (let i = start; i <= end; i++) {
+          if (i >= 1 && i <= totalPages) indices.add(i - 1);
+        }
+      } else {
+        const n = Number(part);
+        if (n >= 1 && n <= totalPages) indices.add(n - 1);
+      }
+    }
+    return Array.from(indices).sort((a, b) => a - b);
+  };
+
+  // ── Download helper
+  const downloadBlob = (bytes, fileName) => {
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = fileName; a.click();
+    URL.revokeObjectURL(url);
+    return blob;
+  };
+
+  // ── MERGE ─────────────────────────────────────────────────────────────────────
+  const handleMerge = async () => {
     if (selectedFiles.length < 2) { onToast("Select at least 2 files to merge.", "error"); return; }
-    onToast(`Merged ${selectedFiles.length} files into "${outputName}.pdf"`, "success");
-    setSelectedFiles([]);
+    const missing = selectedFiles.filter(f => !f.raw);
+    if (missing.length > 0) {
+      onToast(`"${missing[0].name}" has no file data. Please re-upload it.`, "error");
+      return;
+    }
+    setMerging(true);
+    setProgress(0);
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const merged = await PDFDocument.create();
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const f       = selectedFiles[i];
+        const buffer  = await f.raw.arrayBuffer();
+        const srcPdf  = await PDFDocument.load(buffer, { ignoreEncryption: true });
+        const indices = srcPdf.getPageIndices();
+        const copied  = await merged.copyPages(srcPdf, indices);
+        copied.forEach(page => merged.addPage(page));
+        setProgress(Math.round(((i + 1) / selectedFiles.length) * 85));
+      }
+
+      merged.setTitle(outputName);
+      merged.setCreationDate(new Date());
+      const bytes    = await merged.save();
+      const fileName = `${outputName.trim() || "merged"}.pdf`;
+      const blob     = downloadBlob(bytes, fileName);
+
+      // Add to workspace
+      const rawFile = new File([blob], fileName, { type: "application/pdf" });
+      if (onAddFiles) onAddFiles([rawFile]);
+
+      setProgress(100);
+      onToast(`✓ Merged ${selectedFiles.length} files into "${fileName}"`, "success");
+      setSelectedFiles([]);
+      setTimeout(() => { setMerging(false); setProgress(0); }, 600);
+    } catch (err) {
+      console.error(err);
+      onToast(`Merge failed: ${err.message}`, "error");
+      setMerging(false);
+      setProgress(0);
+    }
   };
 
-  const handleSplit = () => {
+  // ── SPLIT ─────────────────────────────────────────────────────────────────────
+  const handleSplit = async () => {
     if (!splitFile) { onToast("Select a file to split.", "error"); return; }
-    onToast(`Split "${splitFile.name}" successfully!`, "success");
-  };
+    if (!splitFile.raw) { onToast("No file data found. Please re-upload the file.", "error"); return; }
+    setSplitting(true);
+    setProgress(0);
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const buffer   = await splitFile.raw.arrayBuffer();
+      const srcPdf   = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const total    = srcPdf.getPageCount();
+      const baseName = splitFile.name.replace(/\.pdf$/i, "");
 
-  const moveUp = (i) => { if (i === 0) return; const a = [...reorderFiles]; [a[i - 1], a[i]] = [a[i], a[i - 1]]; setReorderFiles(a); };
-  const moveDown = (i) => { if (i >= reorderFiles.length - 1) return; const a = [...reorderFiles]; [a[i], a[i + 1]] = [a[i + 1], a[i]]; setReorderFiles(a); };
+      // Build list of page groups based on split mode
+      let groups = [];
+      if (splitMode === "pages") {
+        if (!splitRange.trim()) { onToast("Enter a page range first.", "error"); setSplitting(false); return; }
+        const indices = parsePageRange(splitRange, total);
+        if (indices.length === 0) { onToast("No valid pages found in that range.", "error"); setSplitting(false); return; }
+        groups = [{ indices, suffix: `_pages_${splitRange.replace(/\s/g, "")}` }];
+      } else if (splitMode === "every") {
+        const n = Math.max(1, parseInt(splitEvery) || 1);
+        for (let start = 0; start < total; start += n) {
+          const end     = Math.min(start + n, total);
+          const indices = Array.from({ length: end - start }, (_, i) => start + i);
+          groups.push({ indices, suffix: `_part${Math.floor(start / n) + 1}` });
+        }
+      } else {
+        // Individual pages
+        groups = Array.from({ length: total }, (_, i) => ({ indices: [i], suffix: `_page${i + 1}` }));
+      }
+
+      let count = 0;
+      for (const group of groups) {
+        const newPdf  = await PDFDocument.create();
+        const copied  = await newPdf.copyPages(srcPdf, group.indices);
+        copied.forEach(p => newPdf.addPage(p));
+        const bytes    = await newPdf.save();
+        const fileName = `${baseName}${group.suffix}.pdf`;
+        const blob     = downloadBlob(bytes, fileName);
+        const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+        if (onAddFiles) onAddFiles([rawFile]);
+        count++;
+        setProgress(Math.round((count / groups.length) * 100));
+        // Small delay between downloads so browser doesn't block them
+        if (groups.length > 1) await new Promise(r => setTimeout(r, 120));
+      }
+
+      onToast(`✓ Split into ${count} file${count > 1 ? "s" : ""} — check your downloads!`, "success");
+      setSplitting(false);
+      setProgress(0);
+    } catch (err) {
+      console.error(err);
+      onToast(`Split failed: ${err.message}`, "error");
+      setSplitting(false);
+      setProgress(0);
+    }
+  };
 
   const TabBtn = ({ id, label }) => (
     <button onClick={() => setTab(id)} style={{ background: tab === id ? COLORS.accent : "transparent", color: tab === id ? COLORS.white : COLORS.textMuted, border: `1px solid ${tab === id ? COLORS.accent : COLORS.border}`, borderRadius: 9, padding: "8px 20px", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.15s" }}>
@@ -827,24 +957,28 @@ const MergeSection = ({ files, onToast }) => {
       {tab === "merge" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
           <div>
-            <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14 }}>Select files to merge. Drag to reorder them before merging.</div>
+            <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14 }}>Select files to merge. Use the drop zone to add more PDFs.</div>
             {files.length === 0 ? (
-              <div style={{ background: COLORS.surface2, border: `2px dashed ${COLORS.border}`, borderRadius: 12, padding: "40px 24px", textAlign: "center", color: COLORS.textDim }}>
-                No files in workspace. Upload files first.
-              </div>
+              <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop PDF files here to add them for merging" />
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {files.map((f, i) => (
-                  <div key={i} onClick={() => toggleSelect(f)} style={{ background: selectedFiles.includes(f) ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 10, padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s" }}>
-                    <div style={{ width: 20, height: 20, border: `2px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 5, background: selectedFiles.includes(f) ? COLORS.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      {selectedFiles.includes(f) && <Icon d={icons.check} size={12} color={COLORS.white} />}
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                  {files.map((f, i) => (
+                    <div key={i} onClick={() => toggleSelect(f)} style={{ background: selectedFiles.includes(f) ? COLORS.accentSoft : COLORS.surface2, border: `1.5px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 10, padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s" }}>
+                      <div style={{ width: 20, height: 20, border: `2px solid ${selectedFiles.includes(f) ? COLORS.accent : COLORS.border}`, borderRadius: 5, background: selectedFiles.includes(f) ? COLORS.accent : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {selectedFiles.includes(f) && <Icon d={icons.check} size={12} color={COLORS.white} />}
+                      </div>
+                      <Icon d={icons.file} size={18} color={COLORS.accent} />
+                      <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</div>
+                      <span style={{ fontSize: 11, color: f.raw ? COLORS.success : COLORS.error }}>
+                        {f.raw ? "✓ Ready" : "⚠ No data"}
+                      </span>
+                      <span style={{ fontSize: 11, color: COLORS.textMuted }}>{f.pages || "—"} pages</span>
                     </div>
-                    <Icon d={icons.file} size={18} color={COLORS.accent} />
-                    <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</div>
-                    <span style={{ fontSize: 11, color: COLORS.textMuted }}>{f.pages || "—"} pages</span>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+                <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop more PDFs here to add to workspace" />
+              </>
             )}
           </div>
           <div>
@@ -856,7 +990,19 @@ const MergeSection = ({ files, onToast }) => {
                   style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
               </div>
               <div style={{ fontSize: 12, color: COLORS.textMuted, marginBottom: 16 }}>{selectedFiles.length} file(s) selected</div>
-              <Btn onClick={handleMerge} icon={icons.merge} disabled={selectedFiles.length < 2} style={{ width: "100%", justifyContent: "center" }}>Merge Selected</Btn>
+              {merging && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+                    <span>Merging…</span><span>{progress}%</span>
+                  </div>
+                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
+                    <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.accent}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
+                  </div>
+                </div>
+              )}
+              <Btn onClick={handleMerge} icon={icons.merge} disabled={selectedFiles.length < 2 || merging} style={{ width: "100%", justifyContent: "center" }}>
+                {merging ? "Merging…" : "Merge Selected"}
+              </Btn>
             </div>
           </div>
         </div>
@@ -865,23 +1011,33 @@ const MergeSection = ({ files, onToast }) => {
       {tab === "split" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
           <div>
-            <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14 }}>Select a PDF and choose how to split it.</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
-              {files.map((f, i) => (
-                <div key={i} onClick={() => setSplitFile(f)} style={{ background: splitFile === f ? COLORS.tealSoft : COLORS.surface2, border: `1.5px solid ${splitFile === f ? COLORS.teal : COLORS.border}`, borderRadius: 10, padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s" }}>
-                  <div style={{ width: 20, height: 20, border: `2px solid ${splitFile === f ? COLORS.teal : COLORS.border}`, borderRadius: "50%", background: splitFile === f ? COLORS.teal : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    {splitFile === f && <div style={{ width: 8, height: 8, background: COLORS.white, borderRadius: "50%" }} />}
-                  </div>
-                  <Icon d={icons.file} size={18} color={COLORS.teal} />
-                  <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</div>
+            <div style={{ fontSize: 13, color: COLORS.textMuted, marginBottom: 14 }}>Select a PDF to split, or drop one directly here.</div>
+            {files.length === 0 ? (
+              <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop a PDF here to split it" />
+            ) : (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                  {files.map((f, i) => (
+                    <div key={i} onClick={() => setSplitFile(f)} style={{ background: splitFile === f ? COLORS.tealSoft : COLORS.surface2, border: `1.5px solid ${splitFile === f ? COLORS.teal : COLORS.border}`, borderRadius: 10, padding: "12px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "all 0.15s" }}>
+                      <div style={{ width: 20, height: 20, border: `2px solid ${splitFile === f ? COLORS.teal : COLORS.border}`, borderRadius: "50%", background: splitFile === f ? COLORS.teal : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {splitFile === f && <div style={{ width: 8, height: 8, background: COLORS.white, borderRadius: "50%" }} />}
+                      </div>
+                      <Icon d={icons.file} size={18} color={COLORS.teal} />
+                      <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: COLORS.text }}>{f.name}</div>
+                      <span style={{ fontSize: 11, color: f.raw ? COLORS.success : COLORS.error }}>
+                        {f.raw ? "✓ Ready" : "⚠ No data"}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+                <DropZone onFiles={(dropped) => { if (onAddFiles) onAddFiles(dropped); }} label="Drop another PDF here to add it" />
+              </>
+            )}
           </div>
           <div>
             <div style={{ background: COLORS.surface2, border: `1px solid ${COLORS.border}`, borderRadius: 16, padding: "20px" }}>
               <h3 style={{ margin: "0 0 16px", fontSize: 14, fontWeight: 700, color: COLORS.text }}>Split Options</h3>
-              {[["pages", "By Page Range"], ["every", "Every N Pages"], ["bookmarks", "By Bookmarks"]].map(([id, lbl]) => (
+              {[["pages", "By Page Range"], ["every", "Every N Pages"], ["individual", "Individual Pages"]].map(([id, lbl]) => (
                 <div key={id} onClick={() => setSplitMode(id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", cursor: "pointer" }}>
                   <div style={{ width: 16, height: 16, border: `2px solid ${splitMode === id ? COLORS.teal : COLORS.border}`, borderRadius: "50%", background: splitMode === id ? COLORS.teal : "transparent" }} />
                   <span style={{ fontSize: 13, color: COLORS.text }}>{lbl}</span>
@@ -895,7 +1051,19 @@ const MergeSection = ({ files, onToast }) => {
                 <input type="number" value={splitEvery} onChange={e => setSplitEvery(e.target.value)} min={1}
                   style={{ width: "100%", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 9, padding: "9px 12px", color: COLORS.text, fontSize: 13, outline: "none", marginTop: 12, boxSizing: "border-box" }} />
               )}
-              <Btn onClick={handleSplit} variant="teal" icon={icons.split} disabled={!splitFile} style={{ width: "100%", justifyContent: "center", marginTop: 16 }}>Split PDF</Btn>
+              {splitting && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: COLORS.textMuted, marginBottom: 5 }}>
+                    <span>Splitting…</span><span>{progress}%</span>
+                  </div>
+                  <div style={{ background: COLORS.surface, borderRadius: 100, height: 5, overflow: "hidden" }}>
+                    <div style={{ width: `${progress}%`, height: "100%", background: `linear-gradient(90deg, ${COLORS.teal}, ${COLORS.gold})`, borderRadius: 100, transition: "width 0.2s" }} />
+                  </div>
+                </div>
+              )}
+              <Btn onClick={handleSplit} variant="teal" icon={icons.split} disabled={!splitFile || splitting} style={{ width: "100%", justifyContent: "center", marginTop: 16 }}>
+                {splitting ? "Splitting…" : "Split PDF"}
+              </Btn>
             </div>
           </div>
         </div>
@@ -1545,10 +1713,91 @@ export default function PDFMasterApp() {
   const [viewerFile, setViewerFile] = useState(null);
   const [toast, setToast] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [globalDrag, setGlobalDrag] = useState(false);
+  const dragCounter = useRef(0);
+
+  // ── Prevent browser from opening dragged files outside the app ───────────────
+  useEffect(() => {
+    const prevent = (e) => {
+      // Only intercept file drags — not internal element drags
+      if (e.dataTransfer && e.dataTransfer.types &&
+          Array.from(e.dataTransfer.types).includes("Files")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }
+    };
+
+    const onDragEnter = (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+        dragCounter.current += 1;
+        setGlobalDrag(true);
+      }
+    };
+
+    const onDragLeave = (e) => {
+      dragCounter.current -= 1;
+      if (dragCounter.current <= 0) {
+        dragCounter.current = 0;
+        setGlobalDrag(false);
+      }
+    };
+
+    const onDrop = (e) => {
+      e.preventDefault();
+      dragCounter.current = 0;
+      setGlobalDrag(false);
+      // If the drop landed outside a specific drop zone, add the files to workspace
+      const droppedFiles = Array.from(e.dataTransfer?.files || []);
+      if (droppedFiles.length > 0) {
+        // Check if a specific drop zone already handled this
+        // by seeing if the target has the data-dropzone attribute
+        if (!e.target.closest("[data-dropzone]")) {
+          addFilesGlobal(droppedFiles);
+        }
+      }
+    };
+
+    document.addEventListener("dragover",  prevent);
+    document.addEventListener("dragenter", onDragEnter);
+    document.addEventListener("dragleave", onDragLeave);
+    document.addEventListener("drop",      onDrop);
+
+    return () => {
+      document.removeEventListener("dragover",  prevent);
+      document.removeEventListener("dragenter", onDragEnter);
+      document.removeEventListener("dragleave", onDragLeave);
+      document.removeEventListener("drop",      onDrop);
+    };
+  }, []);
 
   const showToast = useCallback((msg, type = "") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
+  }, []);
+
+  // Used by the global drop handler — defined before addFiles to avoid circular ref
+  const addFilesGlobal = useCallback((rawFiles) => {
+    const mapped = rawFiles
+      .filter(f => f instanceof File)
+      .map(f => ({
+        name:     f.name,
+        size:     f.size,
+        pages:    "—",
+        modified: "Just now",
+        raw:      f,
+      }));
+    if (mapped.length === 0) return;
+    setFiles(prev => {
+      const existing = new Set(prev.map(x => x.name));
+      const fresh = mapped.filter(m => !existing.has(m.name));
+      return [...prev, ...fresh];
+    });
+    setToast({ msg: `${mapped.length} file(s) added to workspace`, type: "success" });
+    setTimeout(() => setToast(null), 3500);
+    // Auto-open single file in viewer
+    if (mapped.length === 1 && mapped[0].raw) {
+      setTimeout(() => setViewerFile(mapped[0]), 300);
+    }
   }, []);
 
   const addFiles = useCallback((newFiles) => {
@@ -1692,6 +1941,27 @@ export default function PDFMasterApp() {
 
       {/* PDF Viewer Overlay — Real PDF.js viewer */}
       {viewerFile && <RealPDFViewer file={viewerFile} onClose={() => setViewerFile(null)} />}
+
+      {/* Global drag overlay — shown when a file is dragged anywhere over the app */}
+      {globalDrag && !viewerFile && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9000,
+          background: "rgba(232,77,77,0.08)",
+          border: `3px dashed ${COLORS.accent}`,
+          borderRadius: 16, margin: 8,
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          pointerEvents: "none",
+        }}>
+          <Icon d={icons.upload} size={52} color={COLORS.accent} />
+          <p style={{ margin: "16px 0 6px", fontSize: 20, fontWeight: 800, color: COLORS.accent, letterSpacing: "-0.5px" }}>
+            Drop to add to workspace
+          </p>
+          <p style={{ margin: 0, fontSize: 14, color: COLORS.textMuted }}>
+            Release to upload — your file stays inside PDF Master
+          </p>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}

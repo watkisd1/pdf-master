@@ -949,20 +949,6 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
     if (!file?.raw) return;
     setSavingForm(true);
     setFormSaved(false);
-
-    // Collect values — inputs update formValues on blur, but also
-    // check the DOM directly for any field that's currently focused
-    const activeEl = document.activeElement;
-    const currentValues = { ...formValues };
-    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
-      // Find which field this element belongs to by position match
-      formFields.forEach(field => {
-        const rect = activeEl.getBoundingClientRect();
-        if (Math.abs(rect.left - field.left) < 5) {
-          currentValues[field.fieldName] = activeEl.value;
-        }
-      });
-    }
     try {
       const { PDFDocument } = await import("pdf-lib");
       const buffer  = await file.raw.arrayBuffer();
@@ -973,7 +959,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       const fields2 = form.getFields();
       fields2.forEach(field => {
         const name  = field.getName();
-        const value = currentValues[name];
+        const value = formValues[name];
         if (value === undefined || value === null) return;
         try {
           const type = field.constructor.name;
@@ -1761,7 +1747,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
               <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale}>
 
                 {/* ── Form field overlays — inside PageCanvas so coords align ── */}
-                {formMode && formFields.map((field) => {
+                {formMode && formFields.map((field, i) => {
                   const val = formValues[field.fieldName] ?? field.fieldValue ?? "";
                   const commonStyle = {
                     position: "absolute",
@@ -1775,11 +1761,8 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
 
                   if (field.checkBox) {
                     return (
-                      <div
-                        key={field.fieldName}
-                        style={{ ...commonStyle, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
-                        onClick={() => setFormValues(prev => ({ ...prev, [field.fieldName]: !(prev[field.fieldName]) }))}
-                      >
+                      <div key={i} style={{ ...commonStyle, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                        onClick={() => setFormValues(prev => ({ ...prev, [field.fieldName]: !prev[field.fieldName] }))}>
                         <div style={{ width: Math.min(field.width, field.height) - 4, height: Math.min(field.width, field.height) - 4, border: "2.5px solid #2563EB", borderRadius: 3, background: val ? "#2563EB" : "rgba(255,255,255,0.95)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                           {(val === true || val === "true" || val === "Yes") && <span style={{ color: "#fff", fontSize: 11, fontWeight: 900, lineHeight: 1 }}>✓</span>}
                         </div>
@@ -1789,15 +1772,8 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
 
                   if (field.options && field.options.length > 0) {
                     return (
-                      <select
-                        key={field.fieldName}
-                        value={val}
-                        onChange={e => {
-                          const v = e.target.value;
-                          setFormValues(prev => ({ ...prev, [field.fieldName]: v }));
-                        }}
-                        style={{ ...commonStyle, background: "rgba(255,255,248,0.97)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.55, 9), 14), padding: "0 2px", outline: "none", fontFamily: "inherit", cursor: "pointer" }}
-                      >
+                      <select key={i} value={val} onChange={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
+                        style={{ ...commonStyle, background: "rgba(255,255,248,0.97)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.55, 9), 14), padding: "0 2px", outline: "none", fontFamily: "inherit", cursor: "pointer" }}>
                         <option value="">Select…</option>
                         {field.options.map((opt, j) => (
                           <option key={j} value={opt.exportValue || opt.displayValue}>{opt.displayValue || opt.exportValue}</option>
@@ -1806,26 +1782,19 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
                     );
                   }
 
-                  // Text field — use defaultValue + onBlur to avoid focus loss on each keystroke
+                  // Text field
                   return field.multiLine ? (
-                    <textarea
-                      key={field.fieldName}
-                      defaultValue={val}
-                      onBlur={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
-                      onChange={e => {
-                        // Update ref value immediately for save without losing focus
-                        e.target._latestValue = e.target.value;
-                      }}
-                      onFocus={e => { e.target._latestValue = e.target.value; }}
+                    <textarea key={i}
+                      value={val}
+                      onChange={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
                       placeholder=""
                       style={{ ...commonStyle, background: "rgba(255,255,248,0.92)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.45, 9), 14), padding: "2px 3px", outline: "none", resize: "none", fontFamily: "inherit", lineHeight: 1.3 }}
                     />
                   ) : (
-                    <input
-                      key={field.fieldName}
+                    <input key={i}
                       type="text"
-                      defaultValue={val}
-                      onBlur={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
+                      value={val}
+                      onChange={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
                       placeholder=""
                       style={{ ...commonStyle, background: "rgba(255,255,248,0.92)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.55, 9), 14), padding: "0 3px", outline: "none", fontFamily: "inherit" }}
                     />

@@ -14,9 +14,11 @@ const S = {
     fontFamily: "'Inter', -apple-system, sans-serif",
   },
   topbar: {
-    display: "flex", alignItems: "center", gap: 12,
+    display: "flex", alignItems: "center", gap: 8,
     padding: "0 16px", height: 52, background: "#13151F",
     borderBottom: "1px solid #2A2F4A", flexShrink: 0,
+    overflowX: "auto", overflowY: "hidden",
+    scrollbarWidth: "thin",
   },
   btn: (active) => ({
     display: "inline-flex", alignItems: "center", gap: 5,
@@ -173,7 +175,7 @@ const ThumbCanvas = ({ pdfDoc, pageNum, active, onClick }) => {
 };
 
 // ── Page canvas ───────────────────────────────────────────────────────────────
-const PageCanvas = ({ pdfDoc, pageNum, scale }) => {
+const PageCanvas = ({ pdfDoc, pageNum, scale, children }) => {
   const ref = useRef();
   const [dims, setDims] = useState({ w: 600, h: 800 });
 
@@ -197,8 +199,9 @@ const PageCanvas = ({ pdfDoc, pageNum, scale }) => {
   }, [pdfDoc, pageNum, scale]);
 
   return (
-    <div style={{ ...S.pageWrap, width: dims.w, minHeight: dims.h }}>
+    <div style={{ ...S.pageWrap, width: dims.w, minHeight: dims.h, position: "relative" }}>
       <canvas ref={ref} style={{ display: "block" }} />
+      {children}
     </div>
   );
 };
@@ -243,6 +246,14 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
   const [wmColor, setWmColor]           = useState("#CC0000");
   const [wmRepeat, setWmRepeat]         = useState(true);
   const [applyingWm, setApplyingWm]     = useState(false);
+
+  // ── Form filling state ───────────────────────────────────────────────────────
+  const [formFields, setFormFields]     = useState([]);   // fields detected on current page
+  const [formValues, setFormValues]     = useState({});   // { fieldName: value }
+  const [formMode, setFormMode]         = useState(false);
+  const [savingForm, setSavingForm]     = useState(false);
+  const [formSaved, setFormSaved]       = useState(false);
+  const pageCanvasRef = useRef();   // ref to the rendered page canvas for positioning
 
   // ── Signature state ──────────────────────────────────────────────────────────
   const [showSignPanel, setShowSignPanel] = useState(false);
@@ -861,7 +872,157 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
     }
   };
 
-  const downloadPDF = () => {
+  // ── Load form fields for the current page ───────────────────────────────────
+  const loadFormFields = async () => {
+    if (!pdfDoc || !formMode) return;
+    try {
+      const page        = await pdfDoc.getPage(currentPage);
+      const annotations = await page.getAnnotations();
+      const vp          = page.getViewport({ scale });
+
+      // PDF.js transform: PDF coords (bottom-left origin) → canvas coords (top-left origin)
+      // vp.transform is [sx, 0, 0, sy, tx, ty]
+      // For a standard upright page: sx=scale, sy=-scale, tx=0, ty=vp.height
+      const [sx, , , sy, tx, ty] = vp.transform;
+
+      const widgets = annotations.filter(a => a.subtype === "Widget");
+
+      const fields = widgets.map(a => {
+        // a.rect is in PDF user space [x1, y1, x2, y2]
+        const [px1, py1, px2, py2] = a.rect;
+
+        // Apply the viewport transform to each corner
+        const cx1 = px1 * sx + tx;
+        const cy1 = py1 * sy + ty;
+        const cx2 = px2 * sx + tx;
+        const cy2 = py2 * sy + ty;
+
+        // Canvas top-left is min of transformed coords
+        const left   = Math.min(cx1, cx2);
+        const top    = Math.min(cy1, cy2);
+        const width  = Math.abs(cx2 - cx1);
+        const height = Math.abs(cy2 - cy1);
+
+        return {
+          id:          a.id || a.fieldName,
+          fieldName:   a.fieldName || a.alternativeText || `field_${a.id}`,
+          fieldType:   a.fieldType,
+          fieldValue:  a.fieldValue != null ? String(a.fieldValue) : "",
+          buttonValue: a.buttonValue,
+          left, top, width, height,
+          readOnly:    !!(a.fieldFlags & 1),
+          multiLine:   !!(a.fieldFlags & (1 << 12)),
+          checkBox:    a.fieldType === "Btn" && !(a.fieldFlags & (1 << 15)),
+          radio:       a.fieldType === "Btn" &&  !!(a.fieldFlags & (1 << 15)),
+          options:     a.options || [],
+        };
+      });
+
+      console.log(`[Form] Page ${currentPage}: found ${widgets.length} widget(s)`, fields.map(f => `${f.fieldName} at (${Math.round(f.left)},${Math.round(f.top)}) ${Math.round(f.width)}×${Math.round(f.height)}`));
+
+      setFormFields(fields);
+
+      // Pre-populate with existing values from the PDF
+      const existing = {};
+      fields.forEach(f => {
+        if (formValues[f.fieldName] === undefined && f.fieldValue) {
+          existing[f.fieldName] = f.fieldValue;
+        }
+      });
+      if (Object.keys(existing).length > 0) {
+        setFormValues(prev => ({ ...existing, ...prev }));
+      }
+    } catch (err) {
+      console.warn("Could not load form fields:", err);
+      setFormFields([]);
+    }
+  };
+
+  // Reload fields when page changes or form mode toggles
+  useEffect(() => {
+    if (formMode) loadFormFields();
+    else setFormFields([]);
+  }, [currentPage, formMode, pdfDoc, scale]);
+
+  // ── Save filled form values into the PDF ────────────────────────────────────
+  const saveFormData = async () => {
+    if (!file?.raw) return;
+    setSavingForm(true);
+    setFormSaved(false);
+
+    // Collect values — inputs update formValues on blur, but also
+    // check the DOM directly for any field that's currently focused
+    const activeEl = document.activeElement;
+    const currentValues = { ...formValues };
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+      // Find which field this element belongs to by position match
+      formFields.forEach(field => {
+        const rect = activeEl.getBoundingClientRect();
+        if (Math.abs(rect.left - field.left) < 5) {
+          currentValues[field.fieldName] = activeEl.value;
+        }
+      });
+    }
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const buffer  = await file.raw.arrayBuffer();
+      const pdfDoc2 = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      const form    = pdfDoc2.getForm();
+
+      // Try to fill each field by name
+      const fields2 = form.getFields();
+      fields2.forEach(field => {
+        const name  = field.getName();
+        const value = currentValues[name];
+        if (value === undefined || value === null) return;
+        try {
+          const type = field.constructor.name;
+          if (type === "PDFTextField") {
+            field.setText(String(value));
+          } else if (type === "PDFCheckBox") {
+            value === true || value === "true" || value === "Yes"
+              ? field.check()
+              : field.uncheck();
+          } else if (type === "PDFDropdown" || type === "PDFOptionList") {
+            if (value) field.select(String(value));
+          }
+        } catch (fieldErr) {
+          console.warn(`Could not fill field "${name}":`, fieldErr.message);
+        }
+      });
+
+      // Flatten the form so values are burned into the PDF visually
+      form.flatten();
+
+      const bytes    = await pdfDoc2.save();
+      const fileName = file.name.replace(/\.pdf$/i, "") + "_filled.pdf";
+      const blob     = new Blob([bytes], { type: "application/pdf" });
+      const rawFile  = new File([blob], fileName, { type: "application/pdf" });
+
+      // Download
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement("a");
+      a.href = url; a.download = fileName; a.click();
+      URL.revokeObjectURL(url);
+
+      // Add to workspace and reload viewer
+      if (onAddFiles) onAddFiles([rawFile]);
+      const reloaded = await pdfjsLib.getDocument({ data: await rawFile.arrayBuffer() }).promise;
+      setPdfDoc(reloaded);
+      setNumPages(reloaded.numPages);
+      file.name = fileName;
+      file.raw  = rawFile;
+
+      setSavingForm(false);
+      setFormSaved(true);
+      setFormMode(false);
+      setTimeout(() => setFormSaved(false), 5000);
+    } catch (err) {
+      console.error(err);
+      setSavingForm(false);
+      alert(`Failed to save form: ${err.message}`);
+    }
+  };
     if (!file?.raw) return;
     const url = URL.createObjectURL(file.raw);
     const a = document.createElement("a");
@@ -1132,118 +1293,147 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
       `}</style>
 
       {/* Top bar */}
-      <div style={S.topbar}>
-        <button className="ihov" style={S.btn(false)} onClick={onClose}>
-          <Ic path={ICO.back} size={14} /> Back
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#E8E9F0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {file?.name || "document.pdf"}
-        </span>
-        {pdfDoc && <span style={S.chip}>{numPages} pages</span>}
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+      {/* ── Toolbar: two rows so nothing is hidden ── */}
+      <div style={{ background: "#13151F", borderBottom: "1px solid #2A2F4A", flexShrink: 0 }}>
 
-        {/* Zoom */}
-        <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.max(0.4, +(s - 0.15).toFixed(2)))} title="Zoom out (-)">
-          <Ic path={ICO.zoomOut} size={14} />
-        </button>
-        <span style={{ fontSize: 12, color: "#E8E9F0", fontWeight: 600, minWidth: 42, textAlign: "center" }}>{zoomPct}%</span>
-        <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.min(3, +(s + 0.15).toFixed(2)))} title="Zoom in (+)">
-          <Ic path={ICO.zoomIn} size={14} />
-        </button>
-        <button className="ihov" style={{ ...S.iconBtn, width: "auto", padding: "0 10px", fontSize: 11 }} onClick={() => setScale(1.4)}>
-          Fit
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+        {/* Row 1 — navigation, zoom, page, view, download, print */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 16px", height: 44, borderBottom: "1px solid #1E2235" }}>
+          <button className="ihov" style={S.btn(false)} onClick={onClose}>
+            <Ic path={ICO.back} size={14} /> Back
+          </button>
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#E8E9F0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>
+            {file?.name || "document.pdf"}
+          </span>
+          {pdfDoc && <span style={S.chip}>{numPages} pp</span>}
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
 
-        {/* Page nav */}
-        <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}>
-          <Ic path={ICO.prev} size={14} />
-        </button>
-        <span style={{ fontSize: 12, color: "#E8E9F0", fontWeight: 500, minWidth: 60, textAlign: "center" }}>
-          {loading ? "—" : `${currentPage} / ${numPages}`}
-        </span>
-        <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages}>
-          <Ic path={ICO.next} size={14} />
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+          {/* Zoom */}
+          <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.max(0.4, +(s - 0.15).toFixed(2)))} title="Zoom out (-)">
+            <Ic path={ICO.zoomOut} size={14} />
+          </button>
+          <span style={{ fontSize: 11, color: "#E8E9F0", fontWeight: 600, minWidth: 36, textAlign: "center" }}>{zoomPct}%</span>
+          <button className="ihov" style={S.iconBtn} onClick={() => setScale(s => Math.min(3, +(s + 0.15).toFixed(2)))} title="Zoom in (+)">
+            <Ic path={ICO.zoomIn} size={14} />
+          </button>
+          <button className="ihov" style={{ ...S.iconBtn, width: "auto", padding: "0 8px", fontSize: 11 }} onClick={() => setScale(1.4)}>Fit</button>
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
 
-        {/* View mode */}
-        <button style={S.btn(viewMode === "single")}     onClick={() => setViewMode("single")}>Single</button>
-        <button style={S.btn(viewMode === "continuous")} onClick={() => setViewMode("continuous")}>Scroll</button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
+          {/* Page nav */}
+          <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage <= 1}>
+            <Ic path={ICO.prev} size={14} />
+          </button>
+          <span style={{ fontSize: 11, color: "#E8E9F0", fontWeight: 500, minWidth: 52, textAlign: "center" }}>
+            {loading ? "—" : `${currentPage} / ${numPages}`}
+          </span>
+          <button className="ihov" style={S.iconBtn} onClick={() => setCurrentPage(p => Math.min(numPages, p + 1))} disabled={currentPage >= numPages}>
+            <Ic path={ICO.next} size={14} />
+          </button>
+          <div style={{ width: 1, height: 18, background: "#2A2F4A" }} />
 
-        {/* Tools */}
-        <button style={S.btn(activeTool === "highlight")} onClick={() => setActiveTool(t => t === "highlight" ? "none" : "highlight")} title="Highlight — drag to select area">
-          🟡 Highlight
-        </button>
-        <button style={S.btn(activeTool === "underline")} onClick={() => setActiveTool(t => t === "underline" ? "none" : "underline")} title="Underline — drag to select area">
-          <Ic path={ICO.underline} size={13} /> Underline
-        </button>
-        <button style={S.btn(activeTool === "strikethrough")} onClick={() => setActiveTool(t => t === "strikethrough" ? "none" : "strikethrough")} title="Strikethrough">
-          <Ic path={ICO.strike} size={13} /> Strike
-        </button>
-        <button style={S.btn(activeTool === "freehand")} onClick={() => setActiveTool(t => t === "freehand" ? "none" : "freehand")} title="Freehand pen">
-          <Ic path={ICO.pen} size={13} /> Draw
-        </button>
-        <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }} title="Sticky note — click to place">
-          <Ic path={ICO.note} size={13} /> Note
-        </button>
-        <button style={{ ...S.btn(activeTool === "check"), color: activeTool === "check" ? "#fff" : "#22C55E", background: activeTool === "check" ? "#22C55E" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "check" ? "none" : "check")} title="Check mark — click to place">
-          ✓ Check
-        </button>
-        <button style={{ ...S.btn(activeTool === "cross"), color: activeTool === "cross" ? "#fff" : "#EF4444", background: activeTool === "cross" ? "#EF4444" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "cross" ? "none" : "cross")} title="X mark — click to place">
-          ✕ Cross
-        </button>
-        <button style={{ ...S.btn(activeTool === "eraser"), color: activeTool === "eraser" ? "#fff" : "#FB923C", background: activeTool === "eraser" ? "#FB923C" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "eraser" ? "none" : "eraser")} title="Eraser — click annotation to remove">
-          <Ic path={ICO.eraser} size={13} /> Erase
-        </button>
+          {/* View mode */}
+          <button style={S.btn(viewMode === "single")}     onClick={() => setViewMode("single")}>Single</button>
+          <button style={S.btn(viewMode === "continuous")} onClick={() => setViewMode("continuous")}>Scroll</button>
+          <div style={{ flex: 1 }} />
 
-        {/* Symbol size for check/cross */}
-        {["check","cross"].includes(activeTool) && (
-          <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "0 4px", borderLeft: "1px solid #2A2F4A", paddingLeft: 10 }}>
-            <span style={{ fontSize: 10, color: "#7B8099" }}>Size</span>
-            <input type="range" min={16} max={64} value={symbolSize} onChange={e => setSymbolSize(parseInt(e.target.value))} style={{ width: 60 }} />
-            <span style={{ fontSize: 10, color: "#E8E9F0", minWidth: 20 }}>{symbolSize}</span>
-          </div>
-        )}
+          {/* Print & Download — always visible, right side */}
+          <button
+            className="ihov"
+            style={{ ...S.btn(false), background: "#2563EB", color: "#fff", gap: 5, border: "none" }}
+            onClick={printPDF}
+            title="Print this PDF"
+          >
+            <Ic path={ICO.print} size={13} /> Print
+          </button>
+          <button className="ihov" style={S.iconBtn} onClick={downloadPDF} title="Download PDF">
+            <Ic path={ICO.download} size={14} />
+          </button>
+        </div>
 
-        {/* Color picker for annotation tools */}
-        {["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && (
-          <div style={{ display: "flex", gap: 5, alignItems: "center", padding: "0 4px", borderLeft: "1px solid #2A2F4A", paddingLeft: 10 }}>
-            {["#FFD700","#FF6B6B","#4ECDC4","#A78BFA","#34D399","#FB923C"].map(c => (
-              <div key={c} onClick={() => setAnnotColor(c)} style={{ width: 18, height: 18, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${annotColor === c ? "#fff" : "transparent"}`, transition: "border 0.1s", flexShrink: 0 }} />
-            ))}
-          </div>
-        )}
+        {/* Row 2 — annotation & editing tools */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 16px", height: 40, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "thin" }}>
 
-        {/* Watermark button */}
-        <button style={{ ...S.btn(showWatermarkPanel), background: showWatermarkPanel ? "#7C3AED" : S.btn(false).background, color: showWatermarkPanel ? "#fff" : "#A78BFA" }} onClick={() => setShowWatermarkPanel(v => !v)} title="Add watermark to all pages">
-          🔏 Watermark
-        </button>
+          {/* Annotation tools */}
+          <button style={S.btn(activeTool === "highlight")} onClick={() => setActiveTool(t => t === "highlight" ? "none" : "highlight")} title="Highlight">
+            🟡 Highlight
+          </button>
+          <button style={S.btn(activeTool === "underline")} onClick={() => setActiveTool(t => t === "underline" ? "none" : "underline")} title="Underline">
+            <Ic path={ICO.underline} size={13} /> Underline
+          </button>
+          <button style={S.btn(activeTool === "strikethrough")} onClick={() => setActiveTool(t => t === "strikethrough" ? "none" : "strikethrough")} title="Strikethrough">
+            <Ic path={ICO.strike} size={13} /> Strike
+          </button>
+          <button style={S.btn(activeTool === "freehand")} onClick={() => setActiveTool(t => t === "freehand" ? "none" : "freehand")} title="Draw freehand">
+            <Ic path={ICO.pen} size={13} /> Draw
+          </button>
+          <button style={S.btn(activeTool === "note")} onClick={() => { setActiveTool(t => t === "note" ? "none" : "note"); setActiveTab("notes"); }} title="Sticky note">
+            <Ic path={ICO.note} size={13} /> Note
+          </button>
+          <button style={{ ...S.btn(activeTool === "check"), color: activeTool === "check" ? "#fff" : "#22C55E", background: activeTool === "check" ? "#22C55E" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "check" ? "none" : "check")} title="Check mark">
+            ✓ Check
+          </button>
+          <button style={{ ...S.btn(activeTool === "cross"), color: activeTool === "cross" ? "#fff" : "#EF4444", background: activeTool === "cross" ? "#EF4444" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "cross" ? "none" : "cross")} title="X mark">
+            ✕ Cross
+          </button>
+          <button style={{ ...S.btn(activeTool === "eraser"), color: activeTool === "eraser" ? "#fff" : "#FB923C", background: activeTool === "eraser" ? "#FB923C" : S.btn(false).background }} onClick={() => setActiveTool(t => t === "eraser" ? "none" : "eraser")} title="Eraser">
+            <Ic path={ICO.eraser} size={13} /> Erase
+          </button>
 
-        {annotations.filter(a => a.page === currentPage).length > 0 && (
-          <>
-            <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
-            <button style={{ ...S.btn(false), background: savingAnnots ? "#22263A" : "#E84D4D", color: "#fff", border: "none" }} onClick={saveAnnotations} disabled={savingAnnots} title="Save annotations permanently into PDF">
-              <Ic path={ICO.save} size={13} /> {savingAnnots ? "Saving…" : `Save (${annotations.filter(a => a.page === currentPage).length})`}
+          {/* Symbol size slider */}
+          {["check","cross"].includes(activeTool) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 5, borderLeft: "1px solid #2A2F4A", paddingLeft: 8 }}>
+              <span style={{ fontSize: 10, color: "#7B8099", whiteSpace: "nowrap" }}>Size {symbolSize}</span>
+              <input type="range" min={16} max={64} value={symbolSize} onChange={e => setSymbolSize(parseInt(e.target.value))} style={{ width: 60 }} />
+            </div>
+          )}
+
+          {/* Color picker */}
+          {["highlight","underline","strikethrough","freehand","note"].includes(activeTool) && (
+            <div style={{ display: "flex", gap: 5, alignItems: "center", borderLeft: "1px solid #2A2F4A", paddingLeft: 8 }}>
+              {["#FFD700","#FF6B6B","#4ECDC4","#A78BFA","#34D399","#FB923C"].map(c => (
+                <div key={c} onClick={() => setAnnotColor(c)} style={{ width: 16, height: 16, background: c, borderRadius: "50%", cursor: "pointer", border: `3px solid ${annotColor === c ? "#fff" : "transparent"}`, flexShrink: 0 }} />
+              ))}
+            </div>
+          )}
+
+          {/* Save / Clear annotations */}
+          {annotations.filter(a => a.page === currentPage).length > 0 && (
+            <>
+              <div style={{ width: 1, height: 18, background: "#2A2F4A", flexShrink: 0 }} />
+              <button style={{ ...S.btn(false), background: "#E84D4D", color: "#fff", border: "none", whiteSpace: "nowrap" }} onClick={saveAnnotations} disabled={savingAnnots}>
+                <Ic path={ICO.save} size={13} /> {savingAnnots ? "Saving…" : `Save ${annotations.filter(a => a.page === currentPage).length} annots`}
+              </button>
+              <button style={{ ...S.btn(false), fontSize: 11, whiteSpace: "nowrap" }} onClick={() => setAnnotations([])}>✕ Clear</button>
+            </>
+          )}
+
+          <div style={{ width: 1, height: 18, background: "#2A2F4A", flexShrink: 0 }} />
+
+          {/* Watermark */}
+          <button style={{ ...S.btn(showWatermarkPanel), background: showWatermarkPanel ? "#7C3AED" : S.btn(false).background, color: showWatermarkPanel ? "#fff" : "#A78BFA", whiteSpace: "nowrap" }} onClick={() => setShowWatermarkPanel(v => !v)}>
+            🔏 Watermark
+          </button>
+
+          {/* Sign */}
+          <button style={{ ...S.btn(showSignPanel), background: showSignPanel ? "#2ECC71" : S.btn(false).background, whiteSpace: "nowrap" }} onClick={() => setShowSignPanel(v => !v)}>
+            ✍ Sign
+          </button>
+
+          {/* Fill Form */}
+          <button
+            style={{ ...S.btn(formMode), background: formMode ? "#60A5FA" : S.btn(false).background, color: formMode ? "#0D0E14" : "#60A5FA", whiteSpace: "nowrap" }}
+            onClick={() => setFormMode(v => !v)}
+          >
+            📝 Fill Form
+          </button>
+
+          {/* Save form values */}
+          {formMode && Object.values(formValues).some(v => v && v !== "") && (
+            <button onClick={saveFormData} disabled={savingForm} style={{ ...S.btn(false), background: "#22C55E", color: "#0D0E14", border: "none", whiteSpace: "nowrap" }}>
+              {savingForm ? "Saving…" : "💾 Save Form"}
             </button>
-            <button style={{ ...S.btn(false), fontSize: 11 }} onClick={() => setAnnotations([])} title="Clear all annotations">
-              ✕ Clear all
-            </button>
-          </>
-        )}
-        <button style={{ ...S.btn(showSignPanel), background: showSignPanel ? "#2ECC71" : S.btn(false).background }} onClick={() => setShowSignPanel(v => !v)}>
-          ✍ Sign
-        </button>
-        <div style={{ width: 1, height: 20, background: "#2A2F4A" }} />
-
-        <button className="ihov" style={S.iconBtn} onClick={downloadPDF} title="Download">
-          <Ic path={ICO.download} size={14} />
-        </button>
-        <button className="ihov" style={S.iconBtn} onClick={printPDF} title="Print">
-          <Ic path={ICO.print} size={14} />
-        </button>
+          )}
+        </div>
       </div>
 
       <div style={S.body}>
@@ -1251,9 +1441,28 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         {/* ── Sign success banner ── */}
         {signSuccess && (
 
+        {/* ── Form fill mode banner ── */}
+        {formMode && (
+          <div style={{ position: "absolute", top: 84, left: 0, right: 0, zIndex: 150, background: "rgba(96,165,250,0.95)", padding: "8px 20px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>
+            <span style={{ fontSize: 16 }}>📝</span>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#0D0E14", flex: 1 }}>
+              Form fill mode — click any blue field on the page and type. Use Tab to move between fields.
+              {formFields.length > 0 && <span style={{ fontWeight: 400, marginLeft: 8 }}>{formFields.length} field(s) on this page.</span>}
+            </div>
+            {Object.values(formValues).some(v => v && v !== "") && (
+              <button onClick={saveFormData} disabled={savingForm} style={{ background: "#22C55E", color: "#0D0E14", border: "none", borderRadius: 7, padding: "5px 14px", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit", flexShrink: 0 }}>
+                {savingForm ? "Saving…" : "💾 Save & Download"}
+              </button>
+            )}
+            <button onClick={() => setFormMode(false)} style={{ background: "rgba(0,0,0,0.15)", border: "none", borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 12, color: "#0D0E14", fontFamily: "inherit", flexShrink: 0 }}>
+              Done
+            </button>
+          </div>
+        )}
+
         {/* ── Watermark panel ── */}
         {showWatermarkPanel && (
-          <div style={{ position: "absolute", top: 52, left: 0, right: 0, zIndex: 200, background: "#13151F", borderBottom: "2px solid #7C3AED", padding: "16px 20px", display: "flex", gap: 20, alignItems: "flex-end", boxShadow: "0 4px 20px rgba(0,0,0,0.5)", flexWrap: "wrap" }}>
+          <div style={{ position: "absolute", top: 84, left: 0, right: 0, zIndex: 200, background: "#13151F", borderBottom: "2px solid #7C3AED", padding: "16px 20px", display: "flex", gap: 20, alignItems: "flex-end", boxShadow: "0 4px 20px rgba(0,0,0,0.5)", flexWrap: "wrap" }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, color: "#A78BFA", letterSpacing: ".6px", textTransform: "uppercase", marginBottom: 10 }}>🔏 Custom Watermark — applied to all pages</div>
               <div style={{ display: "flex", gap: 14, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -1304,7 +1513,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         {/* ── Sign success banner ── */}
         {signSuccess && (
           <div style={{
-            position: "absolute", top: 52, left: 0, right: 0, zIndex: 300,
+            position: "absolute", top: 84, left: 0, right: 0, zIndex: 300,
             background: "rgba(46,204,113,0.95)", padding: "12px 20px",
             display: "flex", alignItems: "center", gap: 12,
             boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
@@ -1323,7 +1532,7 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
         )}
         {showSignPanel && (
           <div style={{
-            position: "absolute", top: 52, left: 0, right: 0, zIndex: 200,
+            position: "absolute", top: 84, left: 0, right: 0, zIndex: 200,
             background: "#13151F", borderBottom: "2px solid #2ECC71",
             padding: "16px 20px", display: "flex", gap: 24, alignItems: "flex-start",
             boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
@@ -1549,7 +1758,95 @@ export default function RealPDFViewer({ file, onClose, onAddFiles }) {
               style={{ position: "relative", display: "inline-block" }}
               onClick={handlePageClick}
             >
-              <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale} />
+              <PageCanvas pdfDoc={pdfDoc} pageNum={currentPage} scale={scale}>
+
+                {/* ── Form field overlays — inside PageCanvas so coords align ── */}
+                {formMode && formFields.map((field) => {
+                  const val = formValues[field.fieldName] ?? field.fieldValue ?? "";
+                  const commonStyle = {
+                    position: "absolute",
+                    left:   field.left,
+                    top:    field.top,
+                    width:  Math.max(field.width, 20),
+                    height: Math.max(field.height, 16),
+                    boxSizing: "border-box",
+                    zIndex: 20,
+                  };
+
+                  if (field.checkBox) {
+                    return (
+                      <div
+                        key={field.fieldName}
+                        style={{ ...commonStyle, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                        onClick={() => setFormValues(prev => ({ ...prev, [field.fieldName]: !(prev[field.fieldName]) }))}
+                      >
+                        <div style={{ width: Math.min(field.width, field.height) - 4, height: Math.min(field.width, field.height) - 4, border: "2.5px solid #2563EB", borderRadius: 3, background: val ? "#2563EB" : "rgba(255,255,255,0.95)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {(val === true || val === "true" || val === "Yes") && <span style={{ color: "#fff", fontSize: 11, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (field.options && field.options.length > 0) {
+                    return (
+                      <select
+                        key={field.fieldName}
+                        value={val}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setFormValues(prev => ({ ...prev, [field.fieldName]: v }));
+                        }}
+                        style={{ ...commonStyle, background: "rgba(255,255,248,0.97)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.55, 9), 14), padding: "0 2px", outline: "none", fontFamily: "inherit", cursor: "pointer" }}
+                      >
+                        <option value="">Select…</option>
+                        {field.options.map((opt, j) => (
+                          <option key={j} value={opt.exportValue || opt.displayValue}>{opt.displayValue || opt.exportValue}</option>
+                        ))}
+                      </select>
+                    );
+                  }
+
+                  // Text field — use defaultValue + onBlur to avoid focus loss on each keystroke
+                  return field.multiLine ? (
+                    <textarea
+                      key={field.fieldName}
+                      defaultValue={val}
+                      onBlur={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
+                      onChange={e => {
+                        // Update ref value immediately for save without losing focus
+                        e.target._latestValue = e.target.value;
+                      }}
+                      onFocus={e => { e.target._latestValue = e.target.value; }}
+                      placeholder=""
+                      style={{ ...commonStyle, background: "rgba(255,255,248,0.92)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.45, 9), 14), padding: "2px 3px", outline: "none", resize: "none", fontFamily: "inherit", lineHeight: 1.3 }}
+                    />
+                  ) : (
+                    <input
+                      key={field.fieldName}
+                      type="text"
+                      defaultValue={val}
+                      onBlur={e => setFormValues(prev => ({ ...prev, [field.fieldName]: e.target.value }))}
+                      placeholder=""
+                      style={{ ...commonStyle, background: "rgba(255,255,248,0.92)", border: "1.5px solid #2563EB", borderRadius: 2, fontSize: Math.min(Math.max(field.height * 0.55, 9), 14), padding: "0 3px", outline: "none", fontFamily: "inherit" }}
+                    />
+                  );
+                })}
+
+                {/* No fields message */}
+                {formMode && formFields.length === 0 && !loading && (
+                  <div style={{ position: "absolute", top: 20, left: "50%", transform: "translateX(-50%)", zIndex: 300, background: "rgba(37,99,235,0.93)", padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600, color: "#fff", whiteSpace: "nowrap", pointerEvents: "none" }}>
+                    No fillable form fields found on this page
+                  </div>
+                )}
+
+              </PageCanvas>
+
+              {/* ── Form saved banner ── */}
+              {formSaved && (
+                <div style={{ position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", zIndex: 300, background: "rgba(34,197,94,0.95)", padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, color: "#0D0E14", boxShadow: "0 4px 16px rgba(0,0,0,0.3)", whiteSpace: "nowrap" }}>
+                  ✓ Form saved and downloaded!
+                </div>
+              )}
 
               {/* ── Annotation overlay canvas ── */}
               {["highlight","underline","strikethrough","freehand","note","eraser","check","cross"].includes(activeTool) && (
